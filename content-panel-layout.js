@@ -322,6 +322,10 @@ function onResizeStart(event) {
     return;
   }
 
+  if (event.currentTarget.dataset.resizeEdge === "e" && startListScrollbarDrag(event, panel)) {
+    return;
+  }
+
   event.preventDefault();
   event.stopPropagation();
 
@@ -342,6 +346,104 @@ function onResizeStart(event) {
   panel.addEventListener("pointermove", onResizeMove);
   panel.addEventListener("pointerup", onResizeEnd);
   panel.addEventListener("pointercancel", onResizeEnd);
+}
+
+function onResizeHandlePointerMove(event) {
+  const handle = event.currentTarget;
+  if (handle.dataset.resizeEdge !== "e" || state.collapsed) {
+    return;
+  }
+
+  const panel = getPanel();
+  const list = panel?.querySelector(".ldsv-list");
+  const isOnThumb = Boolean(getListScrollbarThumbHit(list, event));
+  handle.classList.toggle("is-list-scrollbar-thumb", isOnThumb);
+  handle.classList.toggle("is-panel-resize-active", !isOnThumb);
+  list?.classList.toggle("is-scrollbar-thumb-active", isOnThumb);
+}
+
+function onResizeHandlePointerLeave(event) {
+  event.currentTarget.classList.remove("is-list-scrollbar-thumb");
+  event.currentTarget.classList.remove("is-panel-resize-active");
+  getPanel()?.querySelector(".ldsv-list")?.classList.remove("is-scrollbar-thumb-active");
+}
+
+function startListScrollbarDrag(event, panel) {
+  const list = panel.querySelector(".ldsv-list");
+  const hit = getListScrollbarThumbHit(list, event);
+  if (!hit) {
+    return false;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  listScrollbarDragging = {
+    pointerId: event.pointerId,
+    panel,
+    list,
+    startY: event.clientY,
+    startScrollTop: list.scrollTop,
+    scrollableHeight: hit.scrollableHeight,
+    trackHeight: hit.trackHeight,
+    thumbHeight: hit.thumbHeight
+  };
+
+  event.currentTarget.classList.add("is-list-scrollbar-thumb");
+  list.classList.add("is-scrollbar-thumb-active");
+
+  panel.setPointerCapture(event.pointerId);
+  panel.addEventListener("pointermove", onListScrollbarDragMove);
+  panel.addEventListener("pointerup", onListScrollbarDragEnd);
+  panel.addEventListener("pointercancel", onListScrollbarDragEnd);
+  return true;
+}
+
+function getListScrollbarThumbHit(list, event) {
+  if (!list || list.scrollHeight <= list.clientHeight) {
+    return null;
+  }
+
+  const rect = list.getBoundingClientRect();
+  const scrollbarWidth = Math.max(8, list.offsetWidth - list.clientWidth);
+  const isOnScrollbar = event.clientX >= rect.right - scrollbarWidth - 1 && event.clientX <= rect.right + 1;
+  if (!isOnScrollbar || event.clientY < rect.top || event.clientY > rect.bottom) {
+    return null;
+  }
+
+  const scrollableHeight = list.scrollHeight - list.clientHeight;
+  const trackHeight = list.clientHeight;
+  const thumbHeight = Math.max(24, (list.clientHeight / list.scrollHeight) * trackHeight);
+  const thumbTravel = Math.max(1, trackHeight - thumbHeight);
+  const thumbTop = rect.top + (list.scrollTop / scrollableHeight) * thumbTravel;
+  const isOnThumb = event.clientY >= thumbTop && event.clientY <= thumbTop + thumbHeight;
+
+  return isOnThumb ? { scrollableHeight, trackHeight, thumbHeight } : null;
+}
+
+function onListScrollbarDragMove(event) {
+  if (!listScrollbarDragging || event.pointerId !== listScrollbarDragging.pointerId) {
+    return;
+  }
+
+  const thumbTravel = Math.max(1, listScrollbarDragging.trackHeight - listScrollbarDragging.thumbHeight);
+  const scrollRatio = listScrollbarDragging.scrollableHeight / thumbTravel;
+  const nextScrollTop = listScrollbarDragging.startScrollTop +
+    (event.clientY - listScrollbarDragging.startY) * scrollRatio;
+  listScrollbarDragging.list.scrollTop = nextScrollTop;
+}
+
+function onListScrollbarDragEnd(event) {
+  if (listScrollbarDragging && event.pointerId === listScrollbarDragging.pointerId) {
+    const panel = listScrollbarDragging.panel;
+    listScrollbarDragging.list.classList.remove("is-scrollbar-thumb-active");
+    panel.querySelector(".ldsv-resize-e")?.classList.remove("is-list-scrollbar-thumb");
+    panel.releasePointerCapture(event.pointerId);
+    panel.removeEventListener("pointermove", onListScrollbarDragMove);
+    panel.removeEventListener("pointerup", onListScrollbarDragEnd);
+    panel.removeEventListener("pointercancel", onListScrollbarDragEnd);
+  }
+  listScrollbarDragging = null;
 }
 
 function onResizeMove(event) {

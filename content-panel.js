@@ -48,6 +48,9 @@ function bindPanelEvents(panel) {
   controls.collapseButton.addEventListener("click", onCollapseClick);
   controls.list.addEventListener("scroll", onListScroll);
   controls.resizeHandles.forEach((handle) => {
+    handle.addEventListener("pointerenter", onResizeHandlePointerMove);
+    handle.addEventListener("pointermove", onResizeHandlePointerMove);
+    handle.addEventListener("pointerleave", onResizeHandlePointerLeave);
     handle.addEventListener("pointerdown", onResizeStart);
   });
   controls.feedTrigger.addEventListener("click", onFeedTriggerClick);
