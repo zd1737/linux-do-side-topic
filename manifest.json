@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Linux.do Side Topic View",
+  "description": "Show a draggable and resizable topic list overlay on linux.do topic pages.",
+  "version": "0.0.1",
+  "permissions": [
+    "storage",
+    "scripting",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "https://linux.do/*",
+    "https://api.github.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://linux.do/n/*",
+        "https://linux.do/t/*"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "js": [
+        "content-shared.js",
+        "content-bootstrap.js",
+        "content-panel-dom.js",
+        "content-panel-menus.js",
+        "content-panel-layout.js",
+        "content-panel.js",
+        "content-topics.js",
+        "content-updates.js",
+        "content-list.js",
+        "content-data.js",
+        "content-utils.js",
+        "content-version.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content-shared.js",
+        "message-bus-bridge.js"
+      ],
+      "matches": [
+        "https://linux.do/*"
+      ]
+    }
+  ]
+}

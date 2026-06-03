@@ -1,0 +1,120 @@
+name: 打包并上传扩展 ZIP
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+env:
+  TAG_NAME: ${{ github.ref_name }}
+  ZIP_NAME: linux-do-side-topic-${{ github.ref_name }}.zip
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 更新版本号并提交
+        run: |
+          VERSION="${TAG_NAME#v}"
+          echo "更新 manifest.json 版本号为: $VERSION"
+
+          jq ".version = \"$VERSION\"" manifest.json > tmp.json && mv tmp.json manifest.json
+
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: bump version to $VERSION [skip ci]"
+
+            BRANCH=$(git branch -r --contains "${{ github.sha }}" | grep -v HEAD | head -n 1 | sed 's/^[ \t]*origin\///')
+
+            if [ -n "$BRANCH" ]; then
+              echo "将更新推送到分支: $BRANCH"
+              git push origin "HEAD:$BRANCH"
+            else
+              echo "未找到包含该 commit 的远程分支，跳过推送。"
+            fi
+          else
+            echo "版本号已经是 $VERSION，无需提交更改。"
+          fi
+
+      - name: 创建 ZIP 压缩包
+        run: |
+          PACKAGE_DIR="dist/extension"
+          rm -rf dist "${ZIP_NAME}"
+          mkdir -p "${PACKAGE_DIR}"
+
+          jq -r '
+            [
+              "manifest.json",
+              .background.service_worker?,
+              (.background.scripts[]?),
+              (.content_scripts[]?.css[]?),
+              (.content_scripts[]?.js[]?),
+              (.web_accessible_resources[]?.resources[]?),
+              (.icons? // {} | to_entries[]?.value),
+              (.action?.default_icon? // empty | if type == "object" then to_entries[]?.value else . end),
+              .action?.default_popup?,
+              .options_ui?.page?,
+              .devtools_page?,
+              .side_panel?.default_path?
+            ]
+            | map(select(type == "string" and length > 0))
+            | unique
+            | .[]
+          ' manifest.json > package-files.txt
+
+          while IFS= read -r file; do
+            if [ ! -f "$file" ]; then
+              echo "::error file=manifest.json::打包文件不存在: $file"
+              exit 1
+            fi
+
+            mkdir -p "${PACKAGE_DIR}/$(dirname "$file")"
+            cp "$file" "${PACKAGE_DIR}/$file"
+          done < package-files.txt
+
+          (
+            cd "${PACKAGE_DIR}"
+            zip -r "../../${ZIP_NAME}" .
+          )
+
+      - name: 上传 ZIP 包为 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}
+
+      - name: 创建或更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${TAG_NAME}^" 2>/dev/null || echo "")
+
+          LOG_ARGS=(
+            --pretty=format:"* %s (%h)"
+            --invert-grep
+            --grep="^chore: bump version to .* \\[skip ci\\]$"
+          )
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            git log "${LOG_ARGS[@]}" > changelog.txt
+          else
+            git log "${LOG_ARGS[@]}" "${PREVIOUS_TAG}..HEAD" > changelog.txt
+          fi
+
+          if gh release view "${TAG_NAME}" > /dev/null 2>&1; then
+            gh release edit "${TAG_NAME}" --notes-file changelog.txt
+            gh release upload "${TAG_NAME}" "${ZIP_NAME}" --clobber
+          else
+            gh release create "${TAG_NAME}" "${ZIP_NAME}" --title "${TAG_NAME}" --notes-file changelog.txt
+          fi
