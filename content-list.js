@@ -72,26 +72,71 @@ function getVirtualTopicWindow(list, topicCount, scrollTop, tableTop = 0) {
 
   const viewportHeight = Math.max(list?.clientHeight || 0, VIRTUAL_TOPIC_ESTIMATED_STRIDE);
   const localScrollTop = Math.max(0, Number(scrollTop) - tableTop);
-  const stride = Math.max(1, virtualTopicStride);
-  const visibleCount = Math.min(
-    topicCount,
-    Math.ceil(viewportHeight / stride) + VIRTUAL_TOPIC_OVERSCAN * 2
-  );
-  const maxStart = Math.max(0, topicCount - visibleCount);
-  const start = clamp(Math.floor(localScrollTop / stride) - VIRTUAL_TOPIC_OVERSCAN, 0, maxStart);
-  const end = clamp(start + visibleCount, start, topicCount);
-  const topSpacer = spacerHeightForTopicCount(start);
-  const bottomSpacer = spacerHeightForTopicCount(topicCount - end);
+  const offsets = buildVirtualTopicOffsets(topics.slice(0, topicCount));
+  const firstVisible = topicIndexAtOffset(offsets, localScrollTop);
+  const lastVisible = topicIndexAtOffset(offsets, localScrollTop + viewportHeight);
+  const start = clamp(firstVisible - VIRTUAL_TOPIC_OVERSCAN, 0, topicCount);
+  const end = clamp(lastVisible + VIRTUAL_TOPIC_OVERSCAN + 1, start, topicCount);
+  const topSpacer = spacerHeightBeforeIndex(offsets, start, end < topicCount || start < end);
+  const bottomSpacer = spacerHeightAfterIndex(offsets, end);
 
   return { start, end, topSpacer, bottomSpacer };
 }
 
-function spacerHeightForTopicCount(topicCount) {
-  if (topicCount <= 0) {
+function buildVirtualTopicOffsets(topicList) {
+  const offsets = [0];
+  topicList.forEach((topic, index) => {
+    const rowHeight = virtualTopicHeightFor(topic);
+    const gap = index < topicList.length - 1 ? VIRTUAL_TOPIC_ROW_GAP : 0;
+    offsets.push(offsets[index] + rowHeight + gap);
+  });
+  return offsets;
+}
+
+function virtualTopicHeightFor(topic) {
+  const topicId = Number(topic?.id);
+  const measuredHeight = Number.isFinite(topicId) ? virtualTopicHeights.get(topicId) : null;
+  if (Number.isFinite(measuredHeight) && measuredHeight > 0) {
+    return measuredHeight;
+  }
+
+  return Math.max(1, virtualTopicStride - VIRTUAL_TOPIC_ROW_GAP);
+}
+
+function topicIndexAtOffset(offsets, offset) {
+  const maxIndex = offsets.length - 2;
+  if (maxIndex <= 0) {
     return 0;
   }
 
-  return Math.max(0, topicCount * virtualTopicStride - VIRTUAL_TOPIC_ROW_GAP);
+  let low = 0;
+  let high = maxIndex;
+  while (low < high) {
+    const middle = Math.floor((low + high + 1) / 2);
+    if (offsets[middle] <= offset) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return clamp(low, 0, maxIndex);
+}
+
+function spacerHeightBeforeIndex(offsets, index, hasFollowingRow) {
+  if (index <= 0) {
+    return 0;
+  }
+
+  const boundaryGap = hasFollowingRow ? VIRTUAL_TOPIC_ROW_GAP : 0;
+  return Math.max(0, offsets[index] - boundaryGap);
+}
+
+function spacerHeightAfterIndex(offsets, index) {
+  if (index >= offsets.length - 1) {
+    return 0;
+  }
+
+  return Math.max(0, offsets[offsets.length - 1] - offsets[index]);
 }
 
 function getCurrentTopicTableTop(list) {
@@ -159,6 +204,7 @@ function rerenderVisibleTopicWindow(list) {
   const nextBody = createTopicListBody(topics, currentTopicId, virtualWindow);
   oldBody.replaceWith(nextBody);
   syncVirtualTopicRenderState(virtualWindow, topics.length);
+  measureVirtualTopicRows(table);
   list.scrollTop = previousScrollTop;
 }
 
@@ -168,8 +214,7 @@ function hasReusableTopicTable(list) {
     !list.querySelector(".ldsv-loader, .ldsv-load-error, .ldsv-empty") &&
     topics.length > 0 &&
     topics.length === virtualRenderedTopicCount &&
-    virtualRenderedStart >= 0 &&
-    !virtualTopicStrideNeedsRefresh
+    virtualRenderedStart >= 0
   );
 }
 
@@ -183,48 +228,59 @@ function resetVirtualTopicRenderState() {
   virtualRenderedStart = -1;
   virtualRenderedEnd = -1;
   virtualRenderedTopicCount = -1;
-  virtualTopicStrideNeedsRefresh = true;
+  pruneVirtualTopicHeights(topics);
 }
 
-function measureVirtualTopicStride(table) {
+function measureVirtualTopicRows(table) {
   const rows = [...table.querySelectorAll(".ldsv-topic-row")];
   if (rows.length === 0) {
     return false;
   }
 
-  let measuredStride = 0;
-  if (rows.length > 1) {
-    let total = 0;
-    let count = 0;
-    rows.forEach((row, index) => {
-      const nextRow = rows[index + 1];
-      if (!nextRow) {
-        return;
-      }
+  pruneVirtualTopicHeights(topics);
 
-      const distance = nextRow.offsetTop - row.offsetTop;
-      if (distance > 0) {
-        total += distance;
-        count += 1;
-      }
-    });
-    measuredStride = count > 0 ? total / count : 0;
-  }
-
-  if (measuredStride <= 0) {
-    measuredStride = rows[0].getBoundingClientRect().height + VIRTUAL_TOPIC_ROW_GAP;
-  }
-
-  if (Number.isFinite(measuredStride) && measuredStride > 0) {
-    const nextStride = clamp(Math.round(measuredStride), 48, 220);
-    if (virtualTopicStrideNeedsRefresh && nextStride !== virtualTopicStride) {
-      virtualTopicStride = nextStride;
-      virtualTopicStrideNeedsRefresh = false;
-      return true;
+  let changed = false;
+  let totalStride = 0;
+  let measuredCount = 0;
+  rows.forEach((row) => {
+    const topicId = getTopicIdForRow(row);
+    if (topicId == null) {
+      return;
     }
+
+    const nextHeight = Math.round(row.getBoundingClientRect().height);
+    if (!Number.isFinite(nextHeight) || nextHeight <= 0) {
+      return;
+    }
+
+    const previousHeight = virtualTopicHeights.get(topicId);
+    if (previousHeight !== nextHeight) {
+      virtualTopicHeights.set(topicId, nextHeight);
+      changed = true;
+    }
+    totalStride += nextHeight + VIRTUAL_TOPIC_ROW_GAP;
+    measuredCount += 1;
+  });
+
+  if (measuredCount > 0) {
+    virtualTopicStride = clamp(Math.round(totalStride / measuredCount), 48, 220);
   }
-  virtualTopicStrideNeedsRefresh = false;
-  return false;
+
+  return changed;
+}
+
+function pruneVirtualTopicHeights(topicList) {
+  if (!(virtualTopicHeights instanceof Map)) {
+    virtualTopicHeights = new Map();
+    return;
+  }
+
+  const topicIds = new Set(topicList.map((topic) => Number(topic.id)).filter(Number.isFinite));
+  [...virtualTopicHeights.keys()].forEach((topicId) => {
+    if (!topicIds.has(topicId)) {
+      virtualTopicHeights.delete(topicId);
+    }
+  });
 }
 
 function createTopicRow(topic, currentTopicId) {

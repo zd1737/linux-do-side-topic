@@ -109,7 +109,7 @@ function renderTopics(options = {}) {
     table.append(createTopicListBody(topics, currentTopicId, virtualWindow));
     list.appendChild(table);
     syncVirtualTopicRenderState(virtualWindow, topics.length);
-    measureVirtualTopicStride(table);
+    measureVirtualTopicRows(table);
   } else {
     resetVirtualTopicRenderState();
   }

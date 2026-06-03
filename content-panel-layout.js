@@ -380,7 +380,8 @@ function onResizeEnd(event) {
     state.height = Math.round(state.height);
     state.expandedLeft = state.left;
     state.expandedTop = state.top;
-    virtualTopicStrideNeedsRefresh = true;
+    virtualTopicHeights = new Map();
+    virtualTopicStride = VIRTUAL_TOPIC_ESTIMATED_STRIDE;
     renderTopics({ preserveScroll: true });
     saveStateDebounced();
   }
