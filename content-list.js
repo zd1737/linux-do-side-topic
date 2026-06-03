@@ -83,6 +83,63 @@ function getVirtualTopicWindow(list, topicCount, scrollTop, tableTop = 0) {
   return { start, end, topSpacer, bottomSpacer };
 }
 
+function getVirtualTopicWindowForScrollAnchor(list, topicCount, scrollAnchor, tableTop = 0, fallbackScrollTop = 0) {
+  const topicIndex = topics.findIndex((topic) => Number(topic.id) === Number(scrollAnchor?.topicId));
+  if (topicIndex < 0) {
+    return getVirtualTopicWindow(list, topicCount, fallbackScrollTop, tableTop);
+  }
+
+  const offsets = buildVirtualTopicOffsets(topics.slice(0, topicCount));
+  const anchorOffsetTop = Number(scrollAnchor.offsetTop) || 0;
+  const anchorScrollTop = tableTop + offsets[topicIndex] - anchorOffsetTop;
+  return getVirtualTopicWindow(list, topicCount, anchorScrollTop, tableTop);
+}
+
+function getVirtualScrollAnchor(list) {
+  if (!list) {
+    return null;
+  }
+
+  const listRect = list.getBoundingClientRect();
+  const rows = [...list.querySelectorAll(".ldsv-topic-row")];
+  for (const row of rows) {
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.bottom <= listRect.top || rowRect.top >= listRect.bottom) {
+      continue;
+    }
+
+    const topicId = getTopicIdForRow(row);
+    if (topicId == null) {
+      continue;
+    }
+
+    return {
+      topicId,
+      offsetTop: rowRect.top - listRect.top,
+      scrollTop: list.scrollTop
+    };
+  }
+
+  return null;
+}
+
+function restoreVirtualScrollAnchor(list, scrollAnchor) {
+  if (!list || !scrollAnchor) {
+    return false;
+  }
+
+  const row = [...list.querySelectorAll(".ldsv-topic-row")]
+    .find((entry) => getTopicIdForRow(entry) === Number(scrollAnchor.topicId));
+  if (!row) {
+    return false;
+  }
+
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  list.scrollTop += rowRect.top - listRect.top - scrollAnchor.offsetTop;
+  return true;
+}
+
 function buildVirtualTopicOffsets(topicList) {
   const offsets = [0];
   topicList.forEach((topic, index) => {
@@ -184,7 +241,7 @@ function scheduleVirtualTopicRender(list) {
   });
 }
 
-function rerenderVisibleTopicWindow(list) {
+function rerenderVisibleTopicWindow(list, scrollAnchor = null) {
   const table = list?.querySelector(".ldsv-topic-list");
   const oldBody = table?.querySelector(".ldsv-topic-list-body");
   if (!list || !table || !oldBody || topics.length === 0) {
@@ -193,19 +250,37 @@ function rerenderVisibleTopicWindow(list) {
   }
 
   const previousScrollTop = list.scrollTop;
+  const anchor = scrollAnchor || getVirtualScrollAnchor(list);
   const currentTopicId = selectedTopicId ?? getCurrentTopicId();
-  const virtualWindow = getVirtualTopicWindow(
-    list,
-    topics.length,
-    previousScrollTop,
-    getCurrentTopicTableTop(list)
-  );
+  const tableTop = getCurrentTopicTableTop(list);
+  const virtualWindow = anchor
+    ? getVirtualTopicWindowForScrollAnchor(list, topics.length, anchor, tableTop, previousScrollTop)
+    : getVirtualTopicWindow(list, topics.length, previousScrollTop, tableTop);
 
   const nextBody = createTopicListBody(topics, currentTopicId, virtualWindow);
   oldBody.replaceWith(nextBody);
   syncVirtualTopicRenderState(virtualWindow, topics.length);
+  syncVirtualTopicMeasurements(table, list, currentTopicId, anchor, tableTop, previousScrollTop);
+  if (!restoreVirtualScrollAnchor(list, anchor)) {
+    list.scrollTop = previousScrollTop;
+  }
+}
+
+function syncVirtualTopicMeasurements(table, list, currentTopicId, scrollAnchor, tableTop, fallbackScrollTop) {
+  if (!measureVirtualTopicRows(table) || !scrollAnchor) {
+    return;
+  }
+
+  const adjustedWindow = getVirtualTopicWindowForScrollAnchor(
+    list,
+    topics.length,
+    scrollAnchor,
+    tableTop,
+    fallbackScrollTop
+  );
+  table.querySelector(".ldsv-topic-list-body")?.replaceWith(createTopicListBody(topics, currentTopicId, adjustedWindow));
+  syncVirtualTopicRenderState(adjustedWindow, topics.length);
   measureVirtualTopicRows(table);
-  list.scrollTop = previousScrollTop;
 }
 
 function hasReusableTopicTable(list) {

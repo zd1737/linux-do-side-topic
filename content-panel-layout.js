@@ -338,7 +338,8 @@ function onResizeStart(event) {
     startLeft: rect.left,
     startTop: rect.top,
     startWidth: rect.width,
-    startHeight: rect.height
+    startHeight: rect.height,
+    scrollAnchor: getVirtualScrollAnchor(panel.querySelector(".ldsv-list"))
   };
 
   panel.classList.add("ldsv-resizing");
@@ -482,9 +483,12 @@ function onResizeEnd(event) {
     state.height = Math.round(state.height);
     state.expandedLeft = state.left;
     state.expandedTop = state.top;
-    virtualTopicHeights = new Map();
-    virtualTopicStride = VIRTUAL_TOPIC_ESTIMATED_STRIDE;
-    renderTopics({ preserveScroll: true });
+    const didWidthChange = Math.round(resizing.startWidth) !== state.width;
+    if (didWidthChange) {
+      virtualTopicHeights = new Map();
+      virtualTopicStride = VIRTUAL_TOPIC_ESTIMATED_STRIDE;
+    }
+    renderTopics({ preserveScroll: true, scrollAnchor: resizing.scrollAnchor });
     saveStateDebounced();
   }
   resizing = null;

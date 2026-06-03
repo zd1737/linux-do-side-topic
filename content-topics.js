@@ -81,10 +81,11 @@ function renderTopics(options = {}) {
 
   const list = panel.querySelector(".ldsv-list");
   const previousScrollTop = options.preserveScroll ? list.scrollTop : 0;
+  const scrollAnchor = options.preserveScroll ? options.scrollAnchor || getVirtualScrollAnchor(list) : null;
   const currentTopicId = selectedTopicId ?? getCurrentTopicId();
 
   if (options.preserveScroll && !options.forceRebuild && !isLoadingTopics && !loadError && hasReusableTopicTable(list)) {
-    rerenderVisibleTopicWindow(list);
+    rerenderVisibleTopicWindow(list, scrollAnchor);
     syncIncomingNoticeForPanel();
     return;
   }
@@ -105,11 +106,13 @@ function renderTopics(options = {}) {
     table.className = "ldsv-topic-list";
     table.setAttribute("aria-label", LDSV.messages.controls.topicList);
     const tableTop = getListPaddingTop(list);
-    const virtualWindow = getVirtualTopicWindow(list, topics.length, previousScrollTop, tableTop);
+    const virtualWindow = scrollAnchor
+      ? getVirtualTopicWindowForScrollAnchor(list, topics.length, scrollAnchor, tableTop, previousScrollTop)
+      : getVirtualTopicWindow(list, topics.length, previousScrollTop, tableTop);
     table.append(createTopicListBody(topics, currentTopicId, virtualWindow));
     list.appendChild(table);
     syncVirtualTopicRenderState(virtualWindow, topics.length);
-    measureVirtualTopicRows(table);
+    syncVirtualTopicMeasurements(table, list, currentTopicId, scrollAnchor, tableTop, previousScrollTop);
   } else {
     resetVirtualTopicRenderState();
   }
@@ -127,7 +130,7 @@ function renderTopics(options = {}) {
     list.appendChild(error);
   }
 
-  if (options.preserveScroll) {
+  if (options.preserveScroll && !restoreVirtualScrollAnchor(list, scrollAnchor)) {
     list.scrollTop = previousScrollTop;
   }
 }
