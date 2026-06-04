@@ -113,6 +113,7 @@ function renderTopics(options = {}) {
     list.appendChild(table);
     syncVirtualTopicRenderState(virtualWindow, topics.length);
     syncVirtualTopicMeasurements(table, list, currentTopicId, scrollAnchor, tableTop, previousScrollTop);
+    hideOverflowTopicTags(table);
   } else {
     resetVirtualTopicRenderState();
   }

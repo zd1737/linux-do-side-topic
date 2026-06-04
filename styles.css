@@ -532,10 +532,11 @@
 }
 
 .ldsv-category-trigger {
-  display: block;
+  display: flex;
   width: 100%;
   min-width: 50px;
   max-width: 90px;
+  align-items: center;
   text-align: left;
 }
 
@@ -754,6 +755,26 @@
   white-space: nowrap;
 }
 
+.ldsv-category-label-content {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4em;
+}
+
+.ldsv-category-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ldsv-category-menu-icon {
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+}
+
 .ldsv-category-menu-chevron {
   flex: 0 0 auto;
   color: var(--primary-low-mid, #94a3b8);
@@ -854,13 +875,11 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   align-items: center;
-  gap: 0.45em;
+  justify-content: space-between;
+  gap: 8px;
   min-height: 0;
-  margin-top: 0;
+  margin-top: 2px;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-status {
@@ -908,12 +927,10 @@
   transform: none;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-status.--pinned::before {
-  width: 0.56em;
-  height: 0.56em;
-  border-radius: 50%;
-  background: currentcolor;
-  content: "";
+.ldsv-panel .ldsv-topic-list .ldsv-topic-status.--pinned .d-icon {
+  width: 0.9em;
+  height: 0.9em;
+  color: currentcolor;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-category {
@@ -933,28 +950,29 @@
 .ldsv-panel .ldsv-topic-list .ldsv-topic-category-badge {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 0.25em;
-  background: transparent !important;
-  color: inherit;
-}
-
-.ldsv-panel .ldsv-topic-list .ldsv-topic-category-badge::before {
-  display: block;
-  flex: 0 0 0.55em;
-  width: 0.55em;
-  height: 0.55em;
-  border-radius: 2px;
-  background: var(--category-badge-color, #0088cc);
-  content: "";
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--category-badge-color, #0088cc) 14%, var(--secondary, #ffffff));
+  color: color-mix(in srgb, var(--category-badge-color, #0088cc) 72%, var(--primary, #111827));
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-category-name {
-  overflow: visible;
+  overflow: hidden;
   color: inherit;
-  font-size: var(--font-down-2, 0.8em);
-  text-overflow: clip;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ldsv-panel .ldsv-topic-list .ldsv-topic-category-badge .d-icon {
+  width: 0.95em;
+  height: 0.95em;
+  flex: 0 0 auto;
+  color: currentcolor;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-row {
@@ -1021,12 +1039,9 @@
   text-overflow: clip;
   white-space: normal;
   line-height: 1.38;
-  margin-bottom: 7px;
+  margin-top: 3px;
+  margin-bottom: 10px;
   gap: 4px;
-}
-
-.ldsv-panel .ldsv-topic-list .ldsv-topic-main .ldsv-topic-title-line:has(.ldsv-topic-post-badges) {
-  padding-right: 44px;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-main .ldsv-topic-title {
@@ -1060,10 +1075,6 @@
   vertical-align: top;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-category {
-  vertical-align: middle;
-}
-
 .ldsv-panel .ldsv-topic-list .ldsv-topic-taxonomy {
   display: inline-flex;
   overflow: hidden;
@@ -1071,21 +1082,39 @@
   min-width: 0;
   align-items: center;
   flex: 0 1 auto;
-  gap: 0.3em;
   margin-bottom: 4px;
   color: var(--primary-medium, #64748b);
-  font-size: var(--font-down-2, 0.8em);
+  font-size: 0.76em;
   line-height: 1.25;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-meta {
-  display: grid;
-  width: 100%;
+.ldsv-panel .ldsv-topic-list .ldsv-topic-taxonomy-inner {
+  display: inline-flex;
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
   align-items: center;
-  grid-template-columns: minmax(4em, 1.25fr) repeat(3, minmax(0, 1fr));
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+
+.ldsv-panel .ldsv-topic-list .ldsv-topic-author-meta,
+.ldsv-panel .ldsv-topic-list .ldsv-topic-meta {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.ldsv-panel .ldsv-topic-list .ldsv-topic-author-meta {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+}
+
+.ldsv-panel .ldsv-topic-list .ldsv-topic-meta {
+  flex: 0 1 auto;
+  justify-content: flex-end;
   gap: 4px;
-  margin-left: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  margin-left: auto;
   font-size: var(--font-down-2, 0.8em);
   font-variant-numeric: tabular-nums;
 }
@@ -1095,26 +1124,32 @@
   overflow: hidden;
   flex: 1 1 auto;
   min-width: 0;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: nowrap;
   margin-left: 0;
   color: var(--primary-medium, #64748b);
-  font-size: var(--font-down-2, 0.8em);
-  text-overflow: ellipsis;
   vertical-align: middle;
-  white-space: nowrap;
-  flex-wrap: nowrap;
-}
-
-.ldsv-panel .ldsv-topic-list .ldsv-topic-tags li {
-  display: inline-flex;
-  flex: 0 0 auto;
-  min-width: 0;
-  max-width: 100%;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-tag {
+  display: inline-flex;
   overflow: hidden;
+  flex: 0 0 auto;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.2em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--color1, var(--primary-very-low, #f1f5f9));
+  color: var(--color2, var(--primary-medium, #64748b));
+  line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ldsv-panel .ldsv-topic-list .ldsv-topic-tag[hidden] {
+  display: none !important;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-notification {
@@ -1158,39 +1193,53 @@
   padding: 0;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-author,
-.ldsv-panel .ldsv-topic-list .ldsv-topic-activity-meta,
-.ldsv-panel .ldsv-topic-list .ldsv-topic-views {
+.ldsv-panel .ldsv-topic-list .ldsv-topic-author {
   display: inline-flex;
+  overflow: hidden;
+  min-width: 0;
   align-items: center;
-  color: var(--primary-medium, #64748b);
+  gap: 0.35em;
+  color: var(--primary-high, #334155);
   font-size: var(--font-down-2, 0.8em);
+  font-weight: 600;
   line-height: 1.25;
   text-decoration: none;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-author {
+.ldsv-panel .ldsv-topic-list .ldsv-topic-author-avatar {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.ldsv-panel .ldsv-topic-list .ldsv-topic-author-name {
   overflow: hidden;
   min-width: 0;
-  justify-content: flex-start;
-  padding: 0.2em 0.35em;
-  border: 1px solid var(--primary-low, rgba(17, 24, 39, 0.08));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--primary-very-low, #f8fafc) 78%, var(--secondary, #ffffff));
-  color: var(--primary-medium, #64748b);
-  font-weight: 600;
   text-overflow: ellipsis;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-author::before {
-  content: "@";
+.ldsv-panel .ldsv-topic-list .ldsv-topic-author-name-primary {
+  color: var(--primary, #111827);
+  font-weight: 700;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-replies-badge {
+.ldsv-panel .ldsv-topic-list .ldsv-topic-author-name-secondary {
+  color: var(--primary-high, #334155);
+  font-weight: 500;
+}
+
+.ldsv-panel .ldsv-topic-list .ldsv-topic-replies-badge,
+.ldsv-panel .ldsv-topic-list .ldsv-topic-views,
+.ldsv-panel .ldsv-topic-list .ldsv-topic-activity-meta {
   display: inline-flex;
+  overflow: hidden;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   min-width: 0;
   gap: 0.3em;
   padding: 0.2em 0.35em;
@@ -1198,9 +1247,12 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--primary-very-low, #f8fafc) 78%, var(--secondary, #ffffff));
   color: var(--primary-medium, #64748b);
+  font-size: var(--font-down-2, 0.8em);
   font-weight: 600;
   line-height: 1.25;
   text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-metric-icon {
@@ -1210,29 +1262,8 @@
   color: currentcolor;
 }
 
-.ldsv-panel .ldsv-topic-list .ldsv-topic-views {
-  min-width: 0;
-  justify-content: flex-start;
-  gap: 0.3em;
-  padding: 0.2em 0.35em;
-  border: 1px solid var(--primary-low, rgba(17, 24, 39, 0.08));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--primary-very-low, #f8fafc) 78%, var(--secondary, #ffffff));
-}
-
-.ldsv-panel .ldsv-topic-list .ldsv-topic-activity-meta {
-  min-width: 0;
-  justify-content: flex-start;
-  gap: 0.3em;
-  padding: 0.2em 0.35em;
-  border: 1px solid var(--primary-low, rgba(17, 24, 39, 0.08));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--primary-very-low, #f8fafc) 78%, var(--secondary, #ffffff));
-}
-
 .ldsv-panel .ldsv-topic-list .ldsv-topic-replies-count,
 .ldsv-panel .ldsv-topic-list .ldsv-topic-views-count,
-.ldsv-panel .ldsv-topic-list .ldsv-topic-author,
 .ldsv-panel .ldsv-topic-list .ldsv-topic-activity-meta {
   overflow: hidden;
   text-overflow: ellipsis;

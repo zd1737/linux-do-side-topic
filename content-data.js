@@ -56,6 +56,8 @@ function bookmarkToTopic(bookmark) {
     views: bookmark.views || 0,
     last_poster_username: bookmark.last_poster_username || bookmark.username || bookmark.user?.username || "",
     ldsv_author_username: bookmark.username || bookmark.user?.username || bookmark.post_user_username || "",
+    ldsv_author_name: bookmark.name || bookmark.user?.name || bookmark.post_user_name || "",
+    ldsv_author_avatar_template: bookmark.user?.avatar_template || bookmark.avatar_template || "",
     unread_posts: bookmark.unread_posts || 0,
     new_posts: bookmark.new_posts || 0,
     unseen: Boolean(bookmark.unseen),
@@ -81,13 +83,16 @@ function createUsersById(data) {
 }
 
 function withTopicAuthor(topic, usersById) {
+  const author = findTopicAuthor(topic, usersById);
   return {
     ...topic,
-    ldsv_author_username: findTopicAuthorUsername(topic, usersById)
+    ldsv_author_username: author.username,
+    ldsv_author_name: author.name,
+    ldsv_author_avatar_template: author.avatarTemplate
   };
 }
 
-function findTopicAuthorUsername(topic, usersById) {
+function findTopicAuthor(topic, usersById) {
   const posters = Array.isArray(topic?.posters) ? topic.posters : [];
   const firstPoster = posters[0];
   const firstPosterUser = firstPoster?.user ||
@@ -96,7 +101,11 @@ function findTopicAuthorUsername(topic, usersById) {
   const firstPosterUsername = firstPoster?.username || firstPosterUser?.username;
 
   if (firstPosterUsername) {
-    return firstPosterUsername;
+    return {
+      username: firstPosterUsername,
+      name: firstPosterUser?.name || firstPoster?.name || "",
+      avatarTemplate: firstPosterUser?.avatar_template || firstPoster?.avatar_template || ""
+    };
   }
 
   const directUsername =
@@ -108,14 +117,30 @@ function findTopicAuthorUsername(topic, usersById) {
     topic?.username;
 
   if (directUsername) {
-    return directUsername;
+    return {
+      username: directUsername,
+      name: topic?.creator?.name || topic?.user?.name || topic?.created_by?.name || topic?.posted_by?.name || topic?.name || "",
+      avatarTemplate: topic?.creator?.avatar_template || topic?.user?.avatar_template || topic?.avatar_template || ""
+    };
   }
 
-  return topic?.last_poster_username || "";
+  return {
+    username: topic?.last_poster_username || "",
+    name: topic?.last_poster_name || "",
+    avatarTemplate: topic?.last_poster_avatar_template || ""
+  };
 }
 
 function getTopicAuthorUsername(topic) {
   return topic?.ldsv_author_username || topic?.last_poster_username || "";
+}
+
+function getTopicAuthorName(topic) {
+  return topic?.ldsv_author_name || "";
+}
+
+function getTopicAuthorAvatarTemplate(topic) {
+  return topic?.ldsv_author_avatar_template || "";
 }
 
 function slugFromTopicUrl(url) {
@@ -247,11 +272,38 @@ async function loadCategoryMetadata() {
 }
 
 async function fetchCategoryMetadata() {
-  const siteCategories = await fetchCategoriesFrom("/site.json");
+  const siteCategories = parseCategories(await loadSiteData());
   if (siteCategories.size > 0) {
     return siteCategories;
   }
   return fetchCategoriesFrom("/categories.json");
+}
+
+async function loadSiteData() {
+  if (siteDataCache && Date.now() - siteDataCacheTime < SITE_DATA_CACHE_TTL) {
+    return siteDataCache;
+  }
+
+  if (!siteDataLoad) {
+    siteDataLoad = fetchJson("/site.json")
+      .then((data) => {
+        siteDataCache = data;
+        siteDataCacheTime = Date.now();
+        return data;
+      })
+      .catch((error) => {
+        if (siteDataCache) {
+          LDSV.reportError("refresh site data cache", error);
+          return siteDataCache;
+        }
+        throw error;
+      })
+      .finally(() => {
+        siteDataLoad = null;
+      });
+  }
+
+  return siteDataLoad;
 }
 
 async function fetchCategoriesFrom(path) {

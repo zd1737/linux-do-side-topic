@@ -261,6 +261,7 @@ function rerenderVisibleTopicWindow(list, scrollAnchor = null) {
   oldBody.replaceWith(nextBody);
   syncVirtualTopicRenderState(virtualWindow, topics.length);
   syncVirtualTopicMeasurements(table, list, currentTopicId, anchor, tableTop, previousScrollTop);
+  hideOverflowTopicTags(table);
   if (!restoreVirtualScrollAnchor(list, anchor)) {
     list.scrollTop = previousScrollTop;
   }
@@ -378,14 +379,43 @@ function createTopicRow(topic, currentTopicId) {
   return row;
 }
 
+function hideOverflowTopicTags(root) {
+  root?.querySelectorAll(".ldsv-topic-tags").forEach((tagList) => {
+    const listRect = tagList.getBoundingClientRect();
+    let shouldHideRest = false;
+
+    tagList.querySelectorAll(".ldsv-topic-tag").forEach((tag) => {
+      tag.hidden = false;
+    });
+
+    tagList.querySelectorAll(".ldsv-topic-tag").forEach((tag) => {
+      if (shouldHideRest) {
+        tag.hidden = true;
+        return;
+      }
+
+      const tagRect = tag.getBoundingClientRect();
+      if (tagRect.right > listRect.right + 0.5) {
+        tag.hidden = true;
+        shouldHideRest = true;
+      }
+    });
+  });
+}
+
 function createTopicCell(topic) {
   const cell = document.createElement("td");
   cell.className = "ldsv-topic-main ldsv-topic-list-data";
 
   const taxonomy = document.createElement("span");
   taxonomy.className = "ldsv-topic-taxonomy";
-  appendCategoryBadge(taxonomy, topic);
-  appendTags(taxonomy, topic);
+  const taxonomyInner = document.createElement("span");
+  taxonomyInner.className = "ldsv-topic-taxonomy-inner";
+  appendCategoryBadge(taxonomyInner, topic);
+  appendTags(taxonomyInner, topic);
+  if (taxonomyInner.children.length > 0) {
+    taxonomy.appendChild(taxonomyInner);
+  }
 
   const topLine = document.createElement("span");
   topLine.className = "ldsv-topic-title-line";
@@ -401,14 +431,17 @@ function createTopicCell(topic) {
   link.innerHTML = sanitizeTrustedTopicTitle(topic.fancy_title || escapeHTML(topic.title || LDSV.messages.topic.untitled));
   installTopicTitleEmojiFallbacks(link);
   topLine.appendChild(link);
-  appendTopicBadges(topLine, topic);
+  appendTopicBadges(cell, topic);
 
   const bottomLine = document.createElement("div");
   bottomLine.className = "ldsv-topic-bottom-line";
 
+  const author = document.createElement("span");
+  author.className = "ldsv-topic-author-meta";
+  appendTopicAuthor(author, topic);
+
   const meta = document.createElement("span");
   meta.className = "ldsv-topic-meta";
-  appendTopicAuthor(meta, topic);
   appendTopicRepliesMeta(meta, topic);
   appendTopicViewsMeta(meta, topic);
   appendTopicActivityMeta(meta, topic);
@@ -417,8 +450,13 @@ function createTopicCell(topic) {
     cell.appendChild(taxonomy);
   }
   cell.appendChild(topLine);
-  if (meta.children.length > 0) {
-    bottomLine.appendChild(meta);
+  if (author.children.length > 0 || meta.children.length > 0) {
+    if (author.children.length > 0) {
+      bottomLine.appendChild(author);
+    }
+    if (meta.children.length > 0) {
+      bottomLine.appendChild(meta);
+    }
     cell.appendChild(bottomLine);
   }
   return cell;
@@ -437,12 +475,27 @@ function appendTopicStatus(parent, topic) {
     const label = statusConfig.label();
     status.title = label;
     status.setAttribute("aria-label", label);
+    if (statusConfig.className.includes("--pinned")) {
+      appendTopicStatusSvgIcon(status, "thumbtack");
+    }
     wrapper.appendChild(status);
   });
 
   if (wrapper.children.length > 0) {
     parent.appendChild(wrapper);
   }
+}
+
+function appendTopicStatusSvgIcon(parent, iconName) {
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("class", `fa d-icon d-icon-${iconName} svg-icon fa-width-auto svg-string`);
+  icon.setAttribute("width", "1em");
+  icon.setAttribute("height", "1em");
+  icon.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#${iconName}`);
+  icon.appendChild(use);
+  parent.appendChild(icon);
 }
 
 function appendTopicBadges(parent, topic) {
@@ -474,13 +527,143 @@ function appendTopicAuthor(parent, topic) {
   if (!username) {
     return;
   }
+  const displayNameParts = topicAuthorDisplayNameParts(topic, username);
+  const displayName = displayNameParts.join(" ");
 
   const link = document.createElement("a");
   link.href = `/u/${encodeURIComponent(username)}`;
   link.className = "ldsv-topic-author";
-  link.title = LDSV.messages.topic.author(username);
-  link.textContent = username;
+  link.title = LDSV.messages.topic.author(displayName);
+
+  const avatarUrl = topicAuthorAvatarUrl(topic, 48);
+  if (avatarUrl) {
+    const avatar = document.createElement("img");
+    avatar.className = "ldsv-topic-author-avatar";
+    avatar.crossOrigin = "anonymous";
+    avatar.src = avatarMemoryCache.get(avatarUrl)?.dataUrl || avatarUrl;
+    avatar.dataset.avatarUrl = avatarUrl;
+    avatar.alt = "";
+    avatar.loading = "lazy";
+    avatar.width = 24;
+    avatar.height = 24;
+    if (!avatarMemoryCache.has(avatarUrl)) {
+      avatar.addEventListener("load", onTopicAvatarLoad, { once: true });
+    } else {
+      touchAvatarMemoryCacheEntry(avatarUrl);
+    }
+    link.appendChild(avatar);
+  }
+
+  const label = document.createElement("span");
+  label.className = "ldsv-topic-author-name";
+  displayNameParts.forEach((part, index) => {
+    if (index > 0) {
+      label.appendChild(document.createTextNode(" "));
+    }
+    const namePart = document.createElement("span");
+    namePart.className = index === 0 ? "ldsv-topic-author-name-primary" : "ldsv-topic-author-name-secondary";
+    namePart.textContent = part;
+    label.appendChild(namePart);
+  });
+  link.appendChild(label);
   parent.appendChild(link);
+}
+
+function topicAuthorDisplayNameParts(topic, username) {
+  const name = String(getTopicAuthorName(topic) || "").trim();
+  if (!name || name === username) {
+    return [username];
+  }
+  return [name, username];
+}
+
+function topicAuthorAvatarUrl(topic, size) {
+  const template = getTopicAuthorAvatarTemplate(topic);
+  if (!template) {
+    return "";
+  }
+  const path = template.replace("{size}", String(size));
+  return path.startsWith("http") ? path : new URL(path, "https://cdn.ldstatic.com").href;
+}
+
+async function onTopicAvatarLoad(event) {
+  const avatar = event.currentTarget;
+  const avatarUrl = avatar?.dataset?.avatarUrl || "";
+  if (!avatarUrl || avatarMemoryCache.has(avatarUrl)) {
+    return;
+  }
+
+  try {
+    const dataUrl = await imageElementToDataUrl(avatar);
+    cacheAvatarDataUrl(avatarUrl, dataUrl);
+  } catch (error) {
+    LDSV.reportError("cache avatar image", error);
+  }
+}
+
+function imageElementToDataUrl(image) {
+  const canvas = document.createElement("canvas");
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  if (width <= 0 || height <= 0) {
+    throw new Error("avatar image has no dimensions");
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d").drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/webp", 0.82);
+}
+
+function cacheAvatarDataUrl(avatarUrl, dataUrl) {
+  const bytes = estimateDataUrlBytes(dataUrl);
+  if (bytes <= 0 || bytes > AVATAR_MEMORY_CACHE_ENTRY_MAX_BYTES || bytes > AVATAR_MEMORY_CACHE_MAX_BYTES) {
+    return;
+  }
+
+  const existing = avatarMemoryCache.get(avatarUrl);
+  if (existing) {
+    avatarMemoryCacheBytes -= existing.bytes;
+  }
+
+  avatarMemoryCache.set(avatarUrl, {
+    dataUrl,
+    bytes,
+    lastUsedAt: Date.now()
+  });
+  avatarMemoryCacheBytes += bytes;
+  pruneAvatarMemoryCache();
+}
+
+function touchAvatarMemoryCacheEntry(avatarUrl) {
+  const entry = avatarMemoryCache.get(avatarUrl);
+  if (entry) {
+    entry.lastUsedAt = Date.now();
+  }
+}
+
+function pruneAvatarMemoryCache() {
+  while (avatarMemoryCacheBytes > AVATAR_MEMORY_CACHE_MAX_BYTES && avatarMemoryCache.size > 0) {
+    let oldestKey = null;
+    let oldestUsedAt = Infinity;
+    avatarMemoryCache.forEach((entry, key) => {
+      if (entry.lastUsedAt < oldestUsedAt) {
+        oldestUsedAt = entry.lastUsedAt;
+        oldestKey = key;
+      }
+    });
+    if (!oldestKey) {
+      break;
+    }
+    const entry = avatarMemoryCache.get(oldestKey);
+    avatarMemoryCache.delete(oldestKey);
+    avatarMemoryCacheBytes -= entry?.bytes || 0;
+  }
+}
+
+function estimateDataUrlBytes(dataUrl) {
+  const payload = String(dataUrl || "").split(",")[1] || "";
+  return Math.ceil((payload.length * 3) / 4);
 }
 
 function appendTopicRepliesMeta(parent, topic) {
@@ -582,22 +765,61 @@ function appendCategoryBadge(parent, topic) {
   };
 
   const wrapper = document.createElement("span");
-  wrapper.className = "ldsv-topic-category";
+  wrapper.className = "ldsv-topic-category badge-category__wrapper";
   wrapper.style.setProperty("--category-badge-color", normalizeColor(category.color, "0088cc"));
-  if (category.text_color) {
-    wrapper.style.setProperty("--category-badge-text-color", normalizeColor(category.text_color, "ffffff"));
-  }
+  wrapper.style.setProperty("--category-badge-text-color", normalizeColor(category.text_color, "ffffff"));
 
   const badge = document.createElement("span");
-  badge.className = "ldsv-topic-category-badge";
+  badge.className = categoryBadgeClassName(category);
   badge.dataset.categoryId = category.id;
+  badge.dataset.dropClose = "true";
+  const parentCategoryId = categoryParentId(category);
+  if (parentCategoryId != null) {
+    badge.dataset.parentCategoryId = parentCategoryId;
+  }
+  const description = category.description_text || category.description_excerpt || category.description;
+  if (description) {
+    badge.title = description;
+  }
+
+  if (shouldShowCategoryIcon(category)) {
+    appendDiscourseSvgIcon(badge, category.icon);
+  }
+  if (category.read_restricted) {
+    appendDiscourseSvgIcon(badge, "lock");
+  }
 
   const name = document.createElement("span");
-  name.className = "ldsv-topic-category-name";
+  name.className = "badge-category__name ldsv-topic-category-name";
+  name.dir = "auto";
   name.textContent = category.name || category.slug || LDSV.messages.topic.categoryFallback(category.id);
   badge.appendChild(name);
   wrapper.appendChild(badge);
   parent.appendChild(wrapper);
+}
+
+function categoryBadgeClassName(category) {
+  const classes = ["badge-category", "ldsv-topic-category-badge"];
+  const parentCategoryId = categoryParentId(category);
+  const styleType = safeCategoryStyleType(category.style_type, Boolean(safeIconName(category.icon)));
+  if (category.read_restricted) {
+    classes.push("restricted");
+  }
+  if (parentCategoryId != null) {
+    classes.push("--has-parent");
+  }
+  classes.push(`--style-${styleType}`);
+  return classes.join(" ");
+}
+
+function safeCategoryStyleType(styleType, hasIcon) {
+  return ["icon", "emoji", "square"].includes(styleType)
+    ? styleType
+    : (hasIcon ? "icon" : "square");
+}
+
+function shouldShowCategoryIcon(category) {
+  return safeCategoryStyleType(category.style_type, Boolean(safeIconName(category.icon))) === "icon" && Boolean(safeIconName(category.icon));
 }
 
 function appendTags(parent, topic) {
@@ -605,35 +827,78 @@ function appendTags(parent, topic) {
     return;
   }
 
-  const tags = document.createElement("ul");
+  const tags = document.createElement("span");
   tags.className = "ldsv-topic-tags";
   tags.setAttribute("aria-label", LDSV.messages.controls.tag);
 
-  topic.tags.forEach((tag, index) => {
-    const tagName = typeof tag === "string" ? tag : tag.name;
+  topic.tags.forEach((tag) => {
+    const tagRecord = resolveTopicTag(tag);
+    const tagName = tagDisplayName(tagRecord || tag);
     if (!tagName) {
       return;
     }
 
-    const item = document.createElement("li");
-    const link = document.createElement("span");
-    link.className = "ldsv-topic-tag";
-    link.textContent = tagName;
-    item.appendChild(link);
-
-    if (index < topic.tags.length - 1) {
-      const separator = document.createElement("span");
-      separator.className = "ldsv-topic-tag-separator";
-      separator.textContent = ",";
-      item.appendChild(separator);
-    }
-
-    tags.appendChild(item);
+    const badge = document.createElement("span");
+    badge.className = "discourse-tag box ldsv-topic-tag";
+    applyTagBadgeStyle(badge, tagRecord);
+    badge.appendChild(document.createTextNode(tagName));
+    tags.appendChild(badge);
   });
 
   if (tags.children.length > 0) {
     parent.appendChild(tags);
   }
+}
+
+function resolveTopicTag(tag) {
+  const tagId = normalizeTagId(tag);
+  const tagName = tagDisplayName(tag);
+  const normalizedName = tagName.trim().toLowerCase();
+  return getTagById(tagId) || getTagById(tagName) || getTagById(normalizedName) || (tag && typeof tag === "object" ? tag : null);
+}
+
+function tagDisplayName(tag) {
+  if (tag == null) {
+    return "";
+  }
+  return typeof tag === "string" ? tag : (tag.name || tag.text || tag.slug || "");
+}
+
+function applyTagBadgeStyle(badge, tag) {
+  if (!tag || typeof tag !== "object") {
+    return;
+  }
+
+  const backgroundColor = tag.color || tag.bg_color || tag.background_color;
+  const textColor = tag.text_color || tag.foreground_color;
+  if (backgroundColor) {
+    badge.style.setProperty("--color1", normalizeColor(backgroundColor, "e9ecef"));
+  }
+  if (textColor) {
+    badge.style.setProperty("--color2", normalizeColor(textColor, "222222"));
+  }
+}
+
+function appendDiscourseSvgIcon(parent, iconName) {
+  const safeIcon = safeIconName(iconName);
+  if (!safeIcon) {
+    return;
+  }
+
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("class", `fa d-icon d-icon-${safeIcon} svg-icon fa-width-auto svg-string`);
+  icon.setAttribute("width", "1em");
+  icon.setAttribute("height", "1em");
+  icon.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#${safeIcon}`);
+  icon.appendChild(use);
+  parent.appendChild(icon);
+}
+
+function safeIconName(iconName) {
+  const text = String(iconName || "").trim();
+  return /^[A-Za-z0-9_-]+$/.test(text) ? text : "";
 }
 
 function onTopicRowActivate(event) {

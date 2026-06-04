@@ -328,7 +328,7 @@ function syncCategoryControl(panel) {
   const { categoryTrigger, categoryMenu } = getPanelControls(panel);
   if (categoryTrigger) {
     const label = categorySelectionLabel();
-    categoryTrigger.textContent = label;
+    categoryTrigger.replaceChildren(createCategoryLabelContent(categoryForCurrentSelection(), label));
     categoryTrigger.title = label;
   }
   if (categoryMenu && !categoryMenu.hidden) {
@@ -627,7 +627,7 @@ function createAllCategoryMenuItem() {
   item.dataset.categoryValue = ALL_FILTER_VALUE;
   item.dataset.depth = "0";
   item.setAttribute("role", "menuitem");
-  item.textContent = LDSV.messages.controls.allCategories;
+  item.appendChild(createCategoryLabelContent(null, LDSV.messages.controls.allCategories));
   if (!state.categoryId) {
     item.classList.add("is-selected");
     item.setAttribute("aria-current", "true");
@@ -647,7 +647,7 @@ function createCategoryMenuItem(category, childrenByParentId, depth) {
 
   const label = document.createElement("span");
   label.className = "ldsv-category-menu-label";
-  label.textContent = categoryDisplayName(category);
+  label.appendChild(createCategoryLabelContent(category, categoryDisplayName(category)));
   item.appendChild(label);
 
   const children = childrenByParentId.get(categoryId) || [];
@@ -761,6 +761,48 @@ function categorySelectionLabel() {
   }
   const category = getCategoryById(categoryId);
   return categoryDisplayName(category, categoryId);
+}
+
+function categoryForCurrentSelection() {
+  const categoryId = normalizeFilterId(state.categoryId);
+  return categoryId ? getCategoryById(categoryId) : null;
+}
+
+function createCategoryLabelContent(category, labelText) {
+  const wrapper = document.createElement("span");
+  wrapper.className = "ldsv-category-label-content";
+  appendCategoryMenuIcon(wrapper, category);
+
+  const label = document.createElement("span");
+  label.className = "ldsv-category-label-text";
+  label.textContent = labelText;
+  wrapper.appendChild(label);
+  return wrapper;
+}
+
+function appendCategoryMenuIcon(parent, category) {
+  const iconName = safeCategoryMenuIconName(category?.icon);
+  if (!iconName) {
+    return;
+  }
+
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("class", `fa d-icon d-icon-${iconName} svg-icon fa-width-auto svg-string ldsv-category-menu-icon`);
+  icon.setAttribute("width", "1em");
+  icon.setAttribute("height", "1em");
+  icon.setAttribute("aria-hidden", "true");
+  if (category?.color) {
+    icon.style.color = normalizeColor(category.color, "0088cc");
+  }
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#${iconName}`);
+  icon.appendChild(use);
+  parent.appendChild(icon);
+}
+
+function safeCategoryMenuIconName(iconName) {
+  const text = String(iconName || "").trim();
+  return /^[A-Za-z0-9_-]+$/.test(text) ? text : "";
 }
 
 function feedSelectionLabel() {
