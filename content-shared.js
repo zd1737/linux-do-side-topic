@@ -29,7 +29,8 @@
       unread: "未读",
       top: "排行榜",
       mine: "我的帖子",
-      bookmarks: "书签"
+      bookmarks: "书签",
+      read: "浏览历史"
     }),
     controls: Object.freeze({
       listType: "列表类型",
@@ -147,7 +148,8 @@
     unread: Object.freeze({ label: MESSAGES.feed.unread, path: "/unread.json" }),
     top: Object.freeze({ label: MESSAGES.feed.top, path: "/top.json" }),
     mine: Object.freeze({ label: MESSAGES.feed.mine, path: "/posted.json" }),
-    bookmarks: Object.freeze({ label: MESSAGES.feed.bookmarks, path: "/bookmarks.json" })
+    bookmarks: Object.freeze({ label: MESSAGES.feed.bookmarks, path: "/bookmarks.json" }),
+    read: Object.freeze({ label: MESSAGES.feed.read, path: "/read.json" })
   });
 
   const TOPIC_STATUS_CONFIG = Object.freeze([
@@ -238,7 +240,8 @@
       Object.freeze({ value: "unread", label: MESSAGES.feed.unread }),
       Object.freeze({ value: "top", label: MESSAGES.feed.top }),
       Object.freeze({ value: "mine", label: MESSAGES.feed.mine }),
-      Object.freeze({ value: "bookmarks", label: MESSAGES.feed.bookmarks })
+      Object.freeze({ value: "bookmarks", label: MESSAGES.feed.bookmarks }),
+      Object.freeze({ value: "read", label: MESSAGES.feed.read })
     ]),
     TOPIC_STATUS_CONFIG,
     TOPIC_ROW_CLASSES,
