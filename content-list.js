@@ -475,7 +475,11 @@ function appendTopicStatus(parent, topic) {
     const label = statusConfig.label();
     status.title = label;
     status.setAttribute("aria-label", label);
-    if (statusConfig.className.includes("--pinned")) {
+    if (statusConfig.className.includes("--bookmarked")) {
+      appendTopicStatusSvgIcon(status, "bookmark");
+    } else if (statusConfig.className.includes("--closed")) {
+      appendTopicStatusSvgIcon(status, "lock");
+    } else if (statusConfig.className.includes("--pinned")) {
       appendTopicStatusSvgIcon(status, "thumbtack");
     }
     wrapper.appendChild(status);

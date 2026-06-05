@@ -899,16 +899,11 @@
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-status.--bookmarked::before {
-  width: 0.55em;
-  height: 0.72em;
-  border: 1.5px solid currentcolor;
-  border-bottom-width: 0;
-  content: "";
+  content: none;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-status.--closed::before {
-  content: "x";
-  font-weight: 700;
+  content: none;
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-status.--archived::before {
@@ -920,13 +915,11 @@
 }
 
 .ldsv-panel .ldsv-topic-list .ldsv-topic-status.--closed.--archived::before {
-  width: auto;
-  height: auto;
-  border: 0;
-  content: "x";
-  transform: none;
+  content: none;
 }
 
+.ldsv-panel .ldsv-topic-list .ldsv-topic-status.--bookmarked .d-icon,
+.ldsv-panel .ldsv-topic-list .ldsv-topic-status.--closed .d-icon,
 .ldsv-panel .ldsv-topic-list .ldsv-topic-status.--pinned .d-icon {
   width: 0.9em;
   height: 0.9em;
