@@ -93,6 +93,7 @@ function panelActionButton(panel, action) {
 }
 
 function applyPanelState(panel) {
+  const wasCollapsed = panel.classList.contains("ldsv-collapsed");
   const clamped = clampState(state);
   state = clamped;
   panel.style.left = `${clamped.left}px`;
@@ -108,6 +109,16 @@ function applyPanelState(panel) {
     collapseButton.textContent = clamped.collapsed ? LDSV.messages.controls.topicListShort : "−";
     collapseButton.title = label;
     collapseButton.setAttribute("aria-label", label);
+  }
+
+  // 折叠时列表为 display:none（clientHeight=0），虚拟窗口只会保留少量行。
+  // 展开后等布局拿到真实视口高度，再强制重建列表。
+  if (wasCollapsed && !clamped.collapsed) {
+    window.requestAnimationFrame(() => {
+      if (!state.collapsed && getPanel() === panel) {
+        renderTopics({ forceRebuild: true, preserveScroll: true });
+      }
+    });
   }
 }
 
