@@ -455,6 +455,8 @@ function observeDiscourseNavigation() {
     if (isTopicPage()) {
       scheduleTopicPoll(1000);
     }
+    // 路由切换时同步一次 lightbox 状态，避免残留自动折叠标记。
+    scheduleLightboxAutoCollapseSync();
   };
 
   if (!navigationHistoryPatches) {
@@ -499,6 +501,251 @@ function observeDiscourseNavigation() {
       navigationHistoryPatches = null;
     }
   });
+}
+
+// Discourse 图片查看器（Magnific Popup / PhotoSwipe / d-lightbox）。
+// 面板 z-index 极高，展开时会挡住图片层，因此在查看器打开时自动收缩。
+function lightboxOpenGraceMs() {
+  return 900;
+}
+
+function setupLightboxAutoCollapse() {
+  if (lightboxObserver) {
+    return;
+  }
+
+  lightboxObserver = new MutationObserver(onLightboxDomMutations);
+  const observeTarget = document.body || document.documentElement;
+  lightboxObserver.observe(observeTarget, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "open", "aria-hidden", "hidden"]
+  });
+
+  // 点击 lightbox 链接时立刻收缩，避免等 MutationObserver 晚一拍。
+  document.addEventListener("click", onLightboxTriggerClick, true);
+  document.addEventListener("keydown", onLightboxDocumentKeyDown, true);
+  scheduleLightboxAutoCollapseSync();
+
+  LDSV.registerCleanup(() => {
+    if (lightboxObserver) {
+      lightboxObserver.disconnect();
+      lightboxObserver = null;
+    }
+    if (lightboxSyncFrame) {
+      window.cancelAnimationFrame(lightboxSyncFrame);
+      lightboxSyncFrame = 0;
+    }
+    document.removeEventListener("click", onLightboxTriggerClick, true);
+    document.removeEventListener("keydown", onLightboxDocumentKeyDown, true);
+    clearLightboxAutoCollapse();
+  });
+}
+
+function clearLightboxAutoCollapse() {
+  lightboxAutoCollapsed = false;
+  lightboxSeenOpen = false;
+  lightboxAwaitingOpenUntil = 0;
+}
+
+function onLightboxDomMutations(mutations) {
+  for (const mutation of mutations) {
+    if (mutation.type === "childList") {
+      if (lightboxNodesRelevant(mutation.addedNodes) || lightboxNodesRelevant(mutation.removedNodes)) {
+        scheduleLightboxAutoCollapseSync();
+        return;
+      }
+      continue;
+    }
+
+    if (mutation.type === "attributes" && isLightboxishElement(mutation.target)) {
+      scheduleLightboxAutoCollapseSync();
+      return;
+    }
+  }
+}
+
+function lightboxNodesRelevant(nodeList) {
+  for (const node of nodeList) {
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      continue;
+    }
+    if (isLightboxishElement(node)) {
+      return true;
+    }
+    if (node.querySelector?.(".mfp-wrap, .mfp-bg, .mfp-container, .pswp, .d-lightbox, #d-lightbox, [class*='d-lightbox']")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isLightboxishElement(element) {
+  if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+    return false;
+  }
+  if (element === document.body || element === document.documentElement) {
+    return true;
+  }
+
+  const className = typeof element.className === "string" ? element.className : "";
+  if (
+    className.includes("mfp-") ||
+    className.includes("pswp") ||
+    className.includes("lightbox") ||
+    className.includes("d-lightbox")
+  ) {
+    return true;
+  }
+
+  const id = element.id || "";
+  return id === "d-lightbox" || id.includes("lightbox");
+}
+
+function onLightboxTriggerClick(event) {
+  if (event.defaultPrevented || event.button !== 0) {
+    return;
+  }
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return;
+  }
+
+  const trigger = event.target.closest?.(
+    "a.lightbox, .lightbox-wrapper a, .cooked a.lightbox, a[data-download-href].lightbox"
+  );
+  if (!trigger) {
+    return;
+  }
+
+  // 只在话题页、面板展开时处理；本插件面板内的点击忽略。
+  if (!isTopicPage() || state.collapsed) {
+    return;
+  }
+  if (event.target.closest?.(`#${PANEL_ID}`)) {
+    return;
+  }
+
+  if (collapsePanel()) {
+    const graceMs = lightboxOpenGraceMs();
+    lightboxAutoCollapsed = true;
+    lightboxSeenOpen = false;
+    lightboxAwaitingOpenUntil = performance.now() + graceMs;
+    // 给 lightbox 挂载留一点时间；超时仍未打开则恢复展开。
+    window.setTimeout(scheduleLightboxAutoCollapseSync, graceMs + 50);
+  }
+}
+
+function onLightboxDocumentKeyDown(event) {
+  if (event.key !== "Escape") {
+    return;
+  }
+  // Escape 关闭图片查看后同步一次，尽快恢复展开。
+  scheduleLightboxAutoCollapseSync();
+}
+
+function scheduleLightboxAutoCollapseSync() {
+  if (lightboxSyncFrame) {
+    return;
+  }
+  lightboxSyncFrame = window.requestAnimationFrame(() => {
+    lightboxSyncFrame = 0;
+    syncLightboxAutoCollapse();
+  });
+}
+
+function syncLightboxAutoCollapse() {
+  const panel = getPanel();
+  const lightboxOpen = isDiscourseLightboxOpen();
+
+  if (!panel || panel.hidden || !isTopicPage()) {
+    if (lightboxAutoCollapsed && !lightboxOpen && canRestoreFromLightbox()) {
+      clearLightboxAutoCollapse();
+    }
+    return;
+  }
+
+  if (lightboxOpen) {
+    lightboxSeenOpen = true;
+    lightboxAwaitingOpenUntil = 0;
+    if (!state.collapsed && collapsePanel()) {
+      lightboxAutoCollapsed = true;
+    }
+    return;
+  }
+
+  if (!lightboxAutoCollapsed || !canRestoreFromLightbox()) {
+    return;
+  }
+
+  clearLightboxAutoCollapse();
+  if (state.collapsed) {
+    expandPanel();
+  }
+}
+
+function canRestoreFromLightbox() {
+  // 只有“确实打开过”或“等待挂载超时”后，才允许自动展开，避免点击后 DOM 尚未出现时误恢复。
+  return lightboxSeenOpen || performance.now() >= lightboxAwaitingOpenUntil;
+}
+
+function isDiscourseLightboxOpen() {
+  const selectors = [
+    ".mfp-wrap.mfp-ready",
+    ".mfp-bg.mfp-ready",
+    ".mfp-wrap",
+    ".pswp--open",
+    ".pswp.pswp--open",
+    ".d-lightbox",
+    "#d-lightbox",
+    "dialog.d-lightbox[open]",
+    ".d-modal.d-lightbox",
+    '[class*="d-lightbox"][role="dialog"]'
+  ];
+
+  for (const selector of selectors) {
+    const matches = document.querySelectorAll(selector);
+    for (const element of matches) {
+      if (isLightboxElementVisible(element)) {
+        return true;
+      }
+    }
+  }
+
+  // PhotoSwipe / Magnific 有时只在 body 上挂状态 class。
+  const body = document.body;
+  if (!body) {
+    return false;
+  }
+  return (
+    body.classList.contains("mfp-zoom-out-cur") ||
+    body.classList.contains("pswp-open") ||
+    body.classList.contains("lightbox-open")
+  );
+}
+
+function isLightboxElementVisible(element) {
+  if (!element || element.hidden) {
+    return false;
+  }
+  if (element.getAttribute("aria-hidden") === "true") {
+    return false;
+  }
+  if (element.tagName === "DIALOG" && !element.open) {
+    return false;
+  }
+
+  const style = window.getComputedStyle(element);
+  if (
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    Number(style.opacity) === 0
+  ) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
 }
 
 function clamp(value, min, max) {

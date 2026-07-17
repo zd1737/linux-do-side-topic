@@ -148,9 +148,8 @@ function onDragEnd(event) {
     panel.removeEventListener("pointercancel", onDragEnd);
     panel.classList.remove("ldsv-dragging");
     if (state.collapsed && !dragging.moved && collapsedButtonPointer?.pointerId === event.pointerId) {
-      state.collapsed = false;
-      restoreFromCollapsedAnchor();
-      applyPanelState(panel);
+      expandPanel();
+      clearLightboxAutoCollapse();
       ignoreCollapseClickUntil = performance.now() + 250;
     } else {
       state.left = nextLeft;
@@ -241,27 +240,58 @@ function onCollapseClick(event) {
     return;
   }
 
+  // 手动折叠/展开时取消 lightbox 自动恢复，避免和用户意图打架。
+  clearLightboxAutoCollapse();
   if (state.collapsed) {
-    state.collapsed = false;
-    restoreFromCollapsedAnchor();
+    expandPanel();
   } else {
-    const panelRect = panel.getBoundingClientRect();
-    const buttonRect = event.currentTarget.getBoundingClientRect();
-    const collapsedRect = clampRect({
-      left: buttonRect.left + buttonRect.width / 2 - COLLAPSED_SIZE / 2,
-      top: buttonRect.top + buttonRect.height / 2 - COLLAPSED_SIZE / 2,
-      width: COLLAPSED_SIZE,
-      height: COLLAPSED_SIZE
-    }, { lockSize: true });
-    state.expandedLeft = Math.round(panelRect.left);
-    state.expandedTop = Math.round(panelRect.top);
-    state.left = Math.round(collapsedRect.left);
-    state.top = Math.round(collapsedRect.top);
-    state.collapsed = true;
+    collapsePanel({ anchorButton: event.currentTarget });
   }
+  collapsedButtonPointer = null;
+}
+
+function collapsePanel(options = {}) {
+  const panel = getPanel();
+  if (!panel || state.collapsed) {
+    return false;
+  }
+
+  const panelRect = panel.getBoundingClientRect();
+  const button = options.anchorButton || getPanelControls(panel).collapseButton;
+  const buttonRect = button?.getBoundingClientRect() || {
+    left: panelRect.right - COLLAPSED_SIZE,
+    top: panelRect.top,
+    width: COLLAPSED_SIZE,
+    height: COLLAPSED_SIZE
+  };
+  const collapsedRect = clampRect({
+    left: buttonRect.left + buttonRect.width / 2 - COLLAPSED_SIZE / 2,
+    top: buttonRect.top + buttonRect.height / 2 - COLLAPSED_SIZE / 2,
+    width: COLLAPSED_SIZE,
+    height: COLLAPSED_SIZE
+  }, { lockSize: true });
+
+  state.expandedLeft = Math.round(panelRect.left);
+  state.expandedTop = Math.round(panelRect.top);
+  state.left = Math.round(collapsedRect.left);
+  state.top = Math.round(collapsedRect.top);
+  state.collapsed = true;
   applyPanelState(panel);
   saveStateDebounced();
-  collapsedButtonPointer = null;
+  return true;
+}
+
+function expandPanel() {
+  const panel = getPanel();
+  if (!panel || !state.collapsed) {
+    return false;
+  }
+
+  state.collapsed = false;
+  restoreFromCollapsedAnchor();
+  applyPanelState(panel);
+  saveStateDebounced();
+  return true;
 }
 
 function restoreFromCollapsedAnchor() {

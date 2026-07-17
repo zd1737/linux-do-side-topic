@@ -14,6 +14,7 @@ async function init() {
   createPanel(root);
   syncPanelVisibility();
   observeDiscourseNavigation();
+  setupLightboxAutoCollapse();
   setupTopicListUpdates();
   setupVersionCheck();
   if (isTopicPage()) {
