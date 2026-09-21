@@ -15,6 +15,7 @@ async function loadTopics(options = {}) {
     loadGeneration = generation;
     if (!keepExisting) {
       topics = [];
+      resetVirtualTopicMeasurements();
       categories = new Map();
       moreTopicsUrl = null;
     }
@@ -46,7 +47,12 @@ async function loadTopics(options = {}) {
       append ? topics : [],
       parsedData.topics
     );
-    moreTopicsUrl = parsedData.moreTopicsUrl;
+    // 话题列表设硬上限：达到上限后不再请求下一页，避免长期滚动把堆吃满。
+    if (topics.length > TOPIC_LIST_MAX_ENTRIES) {
+      topics = topics.slice(0, TOPIC_LIST_MAX_ENTRIES);
+    }
+
+    moreTopicsUrl = topics.length >= TOPIC_LIST_MAX_ENTRIES ? null : parsedData.moreTopicsUrl;
     if (hasUnknownCategories(topics)) {
       categories = mergeMaps(categories, await loadCategoryMetadata());
       if (!append && generation !== loadGeneration) {
@@ -63,6 +69,7 @@ async function loadTopics(options = {}) {
   } catch (error) {
     if (!append && !keepExisting) {
       topics = [];
+      resetVirtualTopicMeasurements();
       syncTopicPollSnapshotFromTopics();
       syncTopicTrackingStatesFromTopics(topics);
     }

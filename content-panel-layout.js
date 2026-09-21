@@ -1,5 +1,14 @@
 "use strict";
 
+// 拖拽、缩放与滚动条拖动的临时状态和动画帧跟随生命周期一起清理。
+LDSV.registerCleanup(() => {
+  cancelDragRender();
+  dragging = null;
+  resizing = null;
+  listScrollbarDragging = null;
+  collapsedButtonPointer = null;
+});
+
 function clampState(nextState) {
   const bounds = getPanelBounds();
   const width = clamp(Number(nextState.width) || DEFAULT_STATE.width, bounds.minWidth, bounds.maxWidth);
@@ -573,6 +582,7 @@ function onResizeEnd(event) {
     const didWidthChange = Math.round(resizing.startWidth) !== state.width;
     if (didWidthChange) {
       virtualTopicHeights = new Map();
+      virtualTopicHeightsVersion += 1;
       virtualTopicStride = VIRTUAL_TOPIC_ESTIMATED_STRIDE;
     }
     renderTopics({ preserveScroll: true, scrollAnchor: resizing.scrollAnchor });

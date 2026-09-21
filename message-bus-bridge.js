@@ -8,7 +8,8 @@
   const {
     MESSAGE_BUS_STATUS_EVENT: STATUS_EVENT,
     READ_PROGRESS_EVENT,
-    TOPIC_TRACKING_EVENT
+    TOPIC_TRACKING_EVENT,
+    BRIDGE_CLEANUP_EVENT: CLEANUP_EVENT
   } = window.LDSV.constants;
   const {
     getValue,
@@ -70,6 +71,13 @@
       }
     }
   };
+
+  // 内容脚本清理时通知页面侧桥接退订所有 MessageBus 频道。
+  const onBridgeCleanupRequest = () => {
+    window[BRIDGE_KEY]?.cleanup?.();
+  };
+  window.addEventListener(CLEANUP_EVENT, onBridgeCleanupRequest);
+  cleanups.push(() => window.removeEventListener(CLEANUP_EVENT, onBridgeCleanupRequest));
 
   function subscribe() {
     const owner = getOwner();

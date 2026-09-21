@@ -74,6 +74,10 @@ function bindPanelEvents(panel) {
   LDSV.registerCleanup(() => {
     document.removeEventListener("pointerdown", onDocumentPointerDown);
     document.removeEventListener("keydown", onDocumentKeyDown);
+    if (tagMenuOpenFrame) {
+      window.cancelAnimationFrame(tagMenuOpenFrame);
+      tagMenuOpenFrame = 0;
+    }
   });
 }
 
@@ -147,7 +151,11 @@ function onTagInputFocus(event) {
 function onTagInputPointerDown(event) {
   const panel = event.currentTarget.closest(".ldsv-panel");
   if (isTagMenuClosed(panel)) {
-    window.requestAnimationFrame(() => openTagMenu(panel));
+    window.cancelAnimationFrame(tagMenuOpenFrame);
+    tagMenuOpenFrame = window.requestAnimationFrame(() => {
+      tagMenuOpenFrame = 0;
+      openTagMenu(panel);
+    });
   }
 }
 

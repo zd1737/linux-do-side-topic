@@ -1,5 +1,13 @@
 "use strict";
 
+// 分类菜单的补帧跟随生命周期取消。
+LDSV.registerCleanup(() => {
+  if (categoryMenuSyncFrame) {
+    window.cancelAnimationFrame(categoryMenuSyncFrame);
+    categoryMenuSyncFrame = 0;
+  }
+});
+
 LDSV.feedMenuController = createMenuController({
   pickerKey: "feedPicker",
   triggerKey: "feedTrigger",
@@ -614,7 +622,11 @@ function restoreCategoryRootScrollTop(rootColumn) {
 function revealSelectedCategoryPathAfterRootScroll(menu) {
   const rootColumn = menu?.querySelector?.(".ldsv-category-menu-column[data-depth='0']");
   restoreCategoryRootScrollTop(rootColumn);
-  window.requestAnimationFrame(() => {
+
+  // 折叠式菜单会连续重排，这里只保留最后一帧。
+  window.cancelAnimationFrame(categoryMenuSyncFrame);
+  categoryMenuSyncFrame = window.requestAnimationFrame(() => {
+    categoryMenuSyncFrame = 0;
     restoreCategoryRootScrollTop(rootColumn);
     revealSelectedCategoryPath(menu);
   });

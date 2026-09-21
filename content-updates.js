@@ -27,6 +27,11 @@ function injectMessageBusBridge() {
   }
 
   messageBusBridgeInjected = true;
+
+  // 页面侧的 MessageBus 频道订阅跟随内容脚本清理，避免订阅常驻。
+  LDSV.registerCleanup(() => {
+    window.dispatchEvent(new CustomEvent(BRIDGE_CLEANUP_EVENT));
+  });
   injectPageScript(sharedUrl, MESSAGE_BUS_SHARED_ID)
     .then(() => injectPageScript(bridgeUrl, MESSAGE_BUS_BRIDGE_ID))
     .catch((error) => {
@@ -130,6 +135,11 @@ function addIncomingTopicIds(topicIds) {
       incomingTopicIds.add(numericId);
     }
   });
+
+  // Set 按插入顺序迭代，超出上限时丢弃最早入队的待拉取话题，避免长期挂机无限增长。
+  while (incomingTopicIds.size > INCOMING_TOPIC_MAX) {
+    incomingTopicIds.delete(incomingTopicIds.values().next().value);
+  }
 
   if (incomingTopicIds.size === before) {
     return;
@@ -267,6 +277,7 @@ function applyTopicTrackingMessage(data) {
   }
 
   pruneOldMutedAndUnmutedTopics();
+  pruneTopicTrackingStates();
 
   if (isSuppressedTrackingTopic(topicId, data)) {
     return;
@@ -573,6 +584,32 @@ function pruneOldMutedAndUnmutedTopics() {
   );
 }
 
+// 追踪状态来自全站 MessageBus 消息，条目只增不减会持续吃内存。
+// 超出上限时保留当前列表内的话题，其余按最近使用时间裁剪。
+function pruneTopicTrackingStates() {
+  if (topicTrackingStates.size <= TRACKING_STATE_MAX_ENTRIES) {
+    return;
+  }
+
+  const now = Date.now();
+  const currentEntries = [];
+  const recentEntries = [];
+  topicTrackingStates.forEach((stateForTopic, topicId) => {
+    if (topicIndexById.has(topicId)) {
+      currentEntries.push([topicId, stateForTopic]);
+      return;
+    }
+
+    if (now - Number(stateForTopic.updatedAt || 0) < TRACKING_STATE_TTL) {
+      recentEntries.push([topicId, stateForTopic]);
+    }
+  });
+
+  const keepRecentCount = Math.max(TRACKING_STATE_MAX_ENTRIES - currentEntries.length, 0);
+  recentEntries.sort((left, right) => Number(right[1].updatedAt || 0) - Number(left[1].updatedAt || 0));
+  topicTrackingStates = new Map(currentEntries.concat(recentEntries.slice(0, keepRecentCount)));
+}
+
 function isMutedTopic(topicId) {
   const numericTopicId = Number(topicId);
   return trackingCurrentUser.mutedTopics.some((topic) => Number(topic.topicId) === numericTopicId);
@@ -590,7 +627,7 @@ function mergeTopicTrackingState(topicId, payload) {
   }
 
   const previous = topicTrackingStates.get(numericTopicId) || {};
-  const next = { ...previous, ...payload, topic_id: numericTopicId };
+  const next = { ...previous, ...payload, topic_id: numericTopicId, updatedAt: Date.now() };
   topicTrackingStates.set(numericTopicId, next);
   return next;
 }
@@ -607,6 +644,16 @@ function syncTopicTrackingStatesFromTopics(topicList) {
       topicTrackingStates.set(Number(topic.id), stateFromTopic);
     }
   });
+
+  // 列表整体重建后把追踪状态收敛到当前列表：旧列表的条目不再参与合并，
+  // 留着只会等到达上限才回落。话题列表为空时不收敛，避免加载失败清空全部状态。
+  if (topicList.length === 0) {
+    return;
+  }
+
+  topicTrackingStates = new Map(
+    [...topicTrackingStates].filter(([topicId]) => topicIndexById.has(topicId))
+  );
 }
 
 function createTrackingStateFromTopic(topic) {
@@ -616,7 +663,7 @@ function createTrackingStateFromTopic(topic) {
   }
 
   const previous = topicTrackingStates.get(topicId) || {};
-  const next = { ...previous, topic_id: topicId };
+  const next = { ...previous, topic_id: topicId, updatedAt: Date.now() };
   if (topic.unseen) {
     next.last_read_post_number = null;
   } else if (topic.unread_posts) {

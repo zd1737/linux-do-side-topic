@@ -291,7 +291,25 @@ function findTopicById(topicId) {
     return null;
   }
 
-  return topics.find((topic) => Number(topic.id) === numericTopicId) || null;
+  const indexed = topicIndexById.get(numericTopicId);
+  if (indexed) {
+    return indexed;
+  }
+
+  // 索引尚未建立（话题列表还没赋值）时退回线性查找，保持行为一致。
+  return topicIndexById.size === 0
+    ? topics.find((topic) => Number(topic.id) === numericTopicId) || null
+    : null;
+}
+
+function findTopicPositionById(topicId) {
+  const numericTopicId = Number(topicId);
+  if (!Number.isFinite(numericTopicId)) {
+    return -1;
+  }
+
+  const position = topicArrayIndexById.get(numericTopicId);
+  return position == null ? -1 : position;
 }
 
 async function fetchJson(url, options = {}) {
@@ -382,9 +400,15 @@ function waitForDiscourseRoot() {
       subtree: true
     });
 
-    window.setTimeout(() => {
+    const fallbackTimer = window.setTimeout(() => {
       done(getDiscourseRoot());
     }, 5000);
+
+    LDSV.registerCleanup(() => {
+      settled = true;
+      observer.disconnect();
+      window.clearTimeout(fallbackTimer);
+    });
   });
 }
 
@@ -394,6 +418,7 @@ function syncPanelVisibility() {
     const shouldShow = isTopicPage();
     selectedTopicId = shouldShow ? getCurrentTopicId() : null;
     panel.hidden = !shouldShow;
+    syncLightboxObserverTarget();
     updateSelectedTopicRows();
     if (shouldShow && topics.length === 0) {
       loadTopics();
@@ -510,37 +535,82 @@ function lightboxOpenGraceMs() {
 }
 
 function setupLightboxAutoCollapse() {
+  if (lightboxListenersBound) {
+    return;
+  }
+  lightboxListenersBound = true;
+
+  // 点击 lightbox 链接时立刻收缩，避免等 MutationObserver 晚一拍。
+  document.addEventListener("click", onLightboxTriggerClick, true);
+  document.addEventListener("keydown", onLightboxDocumentKeyDown, true);
+
+  syncLightboxObserverTarget();
+  scheduleLightboxAutoCollapseSync();
+
+  LDSV.registerCleanup(() => {
+    lightboxListenersBound = false;
+    stopLightboxObserver();
+    if (lightboxSyncFrame) {
+      window.cancelAnimationFrame(lightboxSyncFrame);
+      lightboxSyncFrame = 0;
+    }
+    if (lightboxGraceTimer) {
+      window.clearTimeout(lightboxGraceTimer);
+      lightboxGraceTimer = null;
+    }
+    document.removeEventListener("click", onLightboxTriggerClick, true);
+    document.removeEventListener("keydown", onLightboxDocumentKeyDown, true);
+    clearLightboxAutoCollapse();
+  });
+}
+
+// 整页 DOM 观察器只在话题页且面板展开时启用；折叠或离开话题页立即断开，
+// 否则插件自身的每帧渲染都会反复唤醒观察器并触发强制同步布局。
+function syncLightboxObserverTarget() {
+  const panel = getPanel();
+  // 面板展开时需要感知 lightbox 开合；此外在「已被 lightbox 自动折叠、等待恢复」
+  // 期间也必须继续观察，否则用户关闭查看器后无法自动展开。
+  const shouldObserve = Boolean(
+    panel &&
+    !panel.hidden &&
+    isTopicPage() &&
+    (!state.collapsed || lightboxAutoCollapsed)
+  );
+
+  if (shouldObserve) {
+    startLightboxObserver();
+    return;
+  }
+
+  stopLightboxObserver();
+}
+
+function startLightboxObserver() {
   if (lightboxObserver) {
     return;
   }
 
-  lightboxObserver = new MutationObserver(onLightboxDomMutations);
   const observeTarget = document.body || document.documentElement;
+  if (!observeTarget) {
+    return;
+  }
+
+  lightboxObserver = new MutationObserver(onLightboxDomMutations);
   lightboxObserver.observe(observeTarget, {
     childList: true,
     subtree: true,
     attributes: true,
     attributeFilter: ["class", "open", "aria-hidden", "hidden"]
   });
+}
 
-  // 点击 lightbox 链接时立刻收缩，避免等 MutationObserver 晚一拍。
-  document.addEventListener("click", onLightboxTriggerClick, true);
-  document.addEventListener("keydown", onLightboxDocumentKeyDown, true);
-  scheduleLightboxAutoCollapseSync();
+function stopLightboxObserver() {
+  if (!lightboxObserver) {
+    return;
+  }
 
-  LDSV.registerCleanup(() => {
-    if (lightboxObserver) {
-      lightboxObserver.disconnect();
-      lightboxObserver = null;
-    }
-    if (lightboxSyncFrame) {
-      window.cancelAnimationFrame(lightboxSyncFrame);
-      lightboxSyncFrame = 0;
-    }
-    document.removeEventListener("click", onLightboxTriggerClick, true);
-    document.removeEventListener("keydown", onLightboxDocumentKeyDown, true);
-    clearLightboxAutoCollapse();
-  });
+  lightboxObserver.disconnect();
+  lightboxObserver = null;
 }
 
 function clearLightboxAutoCollapse() {
@@ -550,7 +620,14 @@ function clearLightboxAutoCollapse() {
 }
 
 function onLightboxDomMutations(mutations) {
+  const panel = getPanel();
+
   for (const mutation of mutations) {
+    // 插件面板自身的渲染不属于 lightbox 信号，跳过可省掉后续全部判断。
+    if (panel && panel.contains(mutation.target)) {
+      continue;
+    }
+
     if (mutation.type === "childList") {
       if (lightboxNodesRelevant(mutation.addedNodes) || lightboxNodesRelevant(mutation.removedNodes)) {
         scheduleLightboxAutoCollapseSync();
@@ -631,8 +708,16 @@ function onLightboxTriggerClick(event) {
     lightboxAutoCollapsed = true;
     lightboxSeenOpen = false;
     lightboxAwaitingOpenUntil = performance.now() + graceMs;
+    // 折叠后仍需观察 lightbox 是否挂载，关闭查看器时才能恢复展开。
+    syncLightboxObserverTarget();
     // 给 lightbox 挂载留一点时间；超时仍未打开则恢复展开。
-    window.setTimeout(scheduleLightboxAutoCollapseSync, graceMs + 50);
+    if (lightboxGraceTimer) {
+      window.clearTimeout(lightboxGraceTimer);
+    }
+    lightboxGraceTimer = window.setTimeout(() => {
+      lightboxGraceTimer = null;
+      scheduleLightboxAutoCollapseSync();
+    }, graceMs + 50);
   }
 }
 
@@ -690,6 +775,17 @@ function canRestoreFromLightbox() {
 }
 
 function isDiscourseLightboxOpen() {
+  // PhotoSwipe / Magnific 有时只在 body 上挂状态 class，先判这条零布局成本的路径。
+  const body = document.body;
+  if (
+    body &&
+    (body.classList.contains("mfp-zoom-out-cur") ||
+      body.classList.contains("pswp-open") ||
+      body.classList.contains("lightbox-open"))
+  ) {
+    return true;
+  }
+
   const selectors = [
     ".mfp-wrap.mfp-ready",
     ".mfp-bg.mfp-ready",
@@ -712,16 +808,7 @@ function isDiscourseLightboxOpen() {
     }
   }
 
-  // PhotoSwipe / Magnific 有时只在 body 上挂状态 class。
-  const body = document.body;
-  if (!body) {
-    return false;
-  }
-  return (
-    body.classList.contains("mfp-zoom-out-cur") ||
-    body.classList.contains("pswp-open") ||
-    body.classList.contains("lightbox-open")
-  );
+  return false;
 }
 
 function isLightboxElementVisible(element) {

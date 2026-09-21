@@ -211,8 +211,13 @@
     LATEST_RELEASE_MESSAGE: "ldsv:latest-release",
     MESSAGE_BUS_SHARED_ID: "ldsv-message-bus-shared",
     MESSAGE_BUS_BRIDGE_ID: "ldsv-message-bus-bridge",
+    BRIDGE_CLEANUP_EVENT: "ldsv:bridge-cleanup",
     NOTIFICATION_LEVEL_TRACKING: 2,
     MUTED_TOPIC_TTL: 60000,
+    TRACKING_STATE_MAX_ENTRIES: 2000,
+    TRACKING_STATE_TTL: 15 * 60 * 1000,
+    INCOMING_TOPIC_MAX: 500,
+    TOPIC_LIST_MAX_ENTRIES: 1200,
     TOPIC_POLL_VISIBLE_INTERVAL: 60000,
     TOPIC_POLL_HIDDEN_INTERVAL: 180000,
     TOPIC_POLL_ERROR_INTERVAL: 240000,
@@ -280,6 +285,7 @@
     "lightboxSeenOpen",
     "lightboxAwaitingOpenUntil",
     "lightboxObserver",
+    "lightboxListenersBound",
     "lightboxSyncFrame",
     "messageBusBridgeInjected",
     "messageBusBridgeReady",
@@ -302,9 +308,18 @@
     "virtualRenderedStart",
     "virtualRenderedEnd",
     "virtualRenderedTopicCount",
+    "virtualTopicOffsetsCache",
+    "virtualTopicOffsetsKey",
+    "virtualTopicHeightsVersion",
+    "topicIndexById",
+    "topicArrayIndexById",
     "avatarMemoryCache",
     "avatarMemoryCacheBytes",
     "navigationFallbackTimer",
+    "lightboxGraceTimer",
+    "panelRevealFrame",
+    "tagMenuOpenFrame",
+    "categoryMenuSyncFrame",
     "updateNotice",
     "isCheckingVersion",
     "versionCheckAbortController",
@@ -340,6 +355,7 @@
       lightboxSeenOpen: false,
       lightboxAwaitingOpenUntil: 0,
       lightboxObserver: null,
+      lightboxListenersBound: false,
       lightboxSyncFrame: 0,
       messageBusBridgeInjected: false,
       messageBusBridgeReady: false,
@@ -362,9 +378,18 @@
       virtualRenderedStart: -1,
       virtualRenderedEnd: -1,
       virtualRenderedTopicCount: -1,
+      virtualTopicOffsetsCache: null,
+      virtualTopicOffsetsKey: "",
+      virtualTopicHeightsVersion: 0,
+      topicIndexById: new Map(),
+      topicArrayIndexById: new Map(),
       avatarMemoryCache: new Map(),
       avatarMemoryCacheBytes: 0,
       navigationFallbackTimer: null,
+      lightboxGraceTimer: null,
+      panelRevealFrame: 0,
+      tagMenuOpenFrame: 0,
+      categoryMenuSyncFrame: 0,
       updateNotice: null,
       isCheckingVersion: false,
       versionCheckAbortController: null,
@@ -640,6 +665,33 @@
     return namespace.store;
   }
 
+  // 话题列表被整体替换时同步重建查找索引并裁剪高度缓存，
+  // 避免渲染路径上反复做 O(n) 线性查找与全表扫描。
+  function onTopicsReplaced(topicList) {
+    rebuildTopicIndexes(topicList);
+    if (typeof pruneVirtualTopicHeights === "function") {
+      pruneVirtualTopicHeights(topicList);
+    }
+    namespace.store.virtualTopicHeightsVersion += 1;
+  }
+
+  function rebuildTopicIndexes(topicList) {
+    const byId = new Map();
+    const byPositionIndex = new Map();
+    toArray(topicList).forEach((topic, index) => {
+      const topicId = Number(topic?.id);
+      if (!Number.isFinite(topicId)) {
+        return;
+      }
+      byId.set(topicId, topic);
+      if (!byPositionIndex.has(topicId)) {
+        byPositionIndex.set(topicId, index);
+      }
+    });
+    namespace.store.topicIndexById = byId;
+    namespace.store.topicArrayIndexById = byPositionIndex;
+  }
+
   function installGlobalAccessors() {
     const constantKeys = [
       "CONTENT_READY_FLAG",
@@ -657,8 +709,13 @@
       "LATEST_RELEASE_MESSAGE",
       "MESSAGE_BUS_SHARED_ID",
       "MESSAGE_BUS_BRIDGE_ID",
+      "BRIDGE_CLEANUP_EVENT",
       "NOTIFICATION_LEVEL_TRACKING",
       "MUTED_TOPIC_TTL",
+      "TRACKING_STATE_MAX_ENTRIES",
+      "TRACKING_STATE_TTL",
+      "INCOMING_TOPIC_MAX",
+      "TOPIC_LIST_MAX_ENTRIES",
       "TOPIC_POLL_VISIBLE_INTERVAL",
       "TOPIC_POLL_HIDDEN_INTERVAL",
       "TOPIC_POLL_ERROR_INTERVAL",
@@ -696,6 +753,9 @@
         get: () => namespace.store[key],
         set: (value) => {
           namespace.store[key] = value;
+          if (key === "topics") {
+            onTopicsReplaced(value);
+          }
         }
       });
     });

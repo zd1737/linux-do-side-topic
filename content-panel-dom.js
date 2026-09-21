@@ -60,6 +60,13 @@ function createPanel(root) {
 
   initializePanelControls(panel);
   bindPanelEvents(panel);
+
+  LDSV.registerCleanup(() => {
+    if (panelRevealFrame) {
+      window.cancelAnimationFrame(panelRevealFrame);
+      panelRevealFrame = 0;
+    }
+  });
 }
 
 function getPanelControls(panel) {
@@ -103,6 +110,9 @@ function applyPanelState(panel) {
   panel.style.height = `${clamped.collapsed ? COLLAPSED_SIZE : clamped.height}px`;
   panel.classList.toggle("ldsv-collapsed", clamped.collapsed);
 
+  // 折叠状态决定 lightbox 观察器是否需要继续监听整页 DOM。
+  syncLightboxObserverTarget();
+
   const collapseButton = getPanelControls(panel).collapseButton;
   if (collapseButton) {
     const label = clamped.collapsed ? LDSV.messages.controls.expand : LDSV.messages.controls.collapse;
@@ -114,7 +124,9 @@ function applyPanelState(panel) {
   // 折叠时列表为 display:none（clientHeight=0），虚拟窗口只会保留少量行。
   // 展开后等布局拿到真实视口高度，再强制重建列表。
   if (wasCollapsed && !clamped.collapsed) {
-    window.requestAnimationFrame(() => {
+    window.cancelAnimationFrame(panelRevealFrame);
+    panelRevealFrame = window.requestAnimationFrame(() => {
+      panelRevealFrame = 0;
       if (!state.collapsed && getPanel() === panel) {
         renderTopics({ forceRebuild: true, preserveScroll: true });
       }

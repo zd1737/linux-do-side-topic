@@ -1,5 +1,13 @@
 "use strict";
 
+// 列表重建帧跟随扩展生命周期取消，避免清理后仍持有已废弃的列表节点。
+LDSV.registerCleanup(() => {
+  if (virtualRenderFrame) {
+    window.cancelAnimationFrame(virtualRenderFrame);
+    virtualRenderFrame = 0;
+  }
+});
+
 LDSV.metricIcons = Object.freeze({
   replies: Object.freeze({
     paths: Object.freeze([
@@ -72,7 +80,7 @@ function getVirtualTopicWindow(list, topicCount, scrollTop, tableTop = 0) {
 
   const viewportHeight = Math.max(list?.clientHeight || 0, VIRTUAL_TOPIC_ESTIMATED_STRIDE);
   const localScrollTop = Math.max(0, Number(scrollTop) - tableTop);
-  const offsets = buildVirtualTopicOffsets(topics.slice(0, topicCount));
+  const offsets = buildVirtualTopicOffsets(topics, topicCount);
   const firstVisible = topicIndexAtOffset(offsets, localScrollTop);
   const lastVisible = topicIndexAtOffset(offsets, localScrollTop + viewportHeight);
   const start = clamp(firstVisible - VIRTUAL_TOPIC_OVERSCAN, 0, topicCount);
@@ -84,12 +92,12 @@ function getVirtualTopicWindow(list, topicCount, scrollTop, tableTop = 0) {
 }
 
 function getVirtualTopicWindowForScrollAnchor(list, topicCount, scrollAnchor, tableTop = 0, fallbackScrollTop = 0) {
-  const topicIndex = topics.findIndex((topic) => Number(topic.id) === Number(scrollAnchor?.topicId));
+  const topicIndex = findTopicPositionById(scrollAnchor?.topicId);
   if (topicIndex < 0) {
     return getVirtualTopicWindow(list, topicCount, fallbackScrollTop, tableTop);
   }
 
-  const offsets = buildVirtualTopicOffsets(topics.slice(0, topicCount));
+  const offsets = buildVirtualTopicOffsets(topics, topicCount);
   const anchorOffsetTop = Number(scrollAnchor.offsetTop) || 0;
   const anchorScrollTop = tableTop + offsets[topicIndex] - anchorOffsetTop;
   return getVirtualTopicWindow(list, topicCount, anchorScrollTop, tableTop);
@@ -140,13 +148,30 @@ function restoreVirtualScrollAnchor(list, scrollAnchor) {
   return true;
 }
 
-function buildVirtualTopicOffsets(topicList) {
+function buildVirtualTopicOffsets(topicList, count = topicList.length) {
+  const total = Math.max(0, Math.min(count, topicList.length));
+  const headId = total > 0 ? topicList[0]?.id ?? "" : "";
+  const tailId = total > 1 ? topicList[total - 1]?.id ?? "" : "";
+  // 偏移表只依赖「数量 + 首尾话题 + 行高版本 + 步长」，命中缓存直接复用，
+  // 避免滚动时每帧重建整张 O(n) 数组。
+  const cacheKey = `${total}|${headId}|${tailId}|${virtualTopicStride}|${virtualTopicHeightsVersion}`;
+  if (
+    virtualTopicOffsetsCache &&
+    virtualTopicOffsetsKey === cacheKey &&
+    virtualTopicOffsetsCache.length === total + 1
+  ) {
+    return virtualTopicOffsetsCache;
+  }
+
   const offsets = [0];
-  topicList.forEach((topic, index) => {
-    const rowHeight = virtualTopicHeightFor(topic);
-    const gap = index < topicList.length - 1 ? VIRTUAL_TOPIC_ROW_GAP : 0;
+  for (let index = 0; index < total; index += 1) {
+    const rowHeight = virtualTopicHeightFor(topicList[index]);
+    const gap = index < total - 1 ? VIRTUAL_TOPIC_ROW_GAP : 0;
     offsets.push(offsets[index] + rowHeight + gap);
-  });
+  }
+
+  virtualTopicOffsetsCache = offsets;
+  virtualTopicOffsetsKey = cacheKey;
   return offsets;
 }
 
@@ -313,8 +338,6 @@ function measureVirtualTopicRows(table) {
     return false;
   }
 
-  pruneVirtualTopicHeights(topics);
-
   let changed = false;
   let totalStride = 0;
   let measuredCount = 0;
@@ -342,21 +365,42 @@ function measureVirtualTopicRows(table) {
     virtualTopicStride = clamp(Math.round(totalStride / measuredCount), 48, 220);
   }
 
+  if (changed) {
+    virtualTopicHeightsVersion += 1;
+  }
+
   return changed;
 }
 
 function pruneVirtualTopicHeights(topicList) {
   if (!(virtualTopicHeights instanceof Map)) {
     virtualTopicHeights = new Map();
+    virtualTopicHeightsVersion += 1;
     return;
   }
 
-  const topicIds = new Set(topicList.map((topic) => Number(topic.id)).filter(Number.isFinite));
+  const topicIds = new Set((topicList || []).map((topic) => Number(topic.id)).filter(Number.isFinite));
+  let removed = 0;
   [...virtualTopicHeights.keys()].forEach((topicId) => {
     if (!topicIds.has(topicId)) {
       virtualTopicHeights.delete(topicId);
+      removed += 1;
     }
   });
+
+  if (removed > 0) {
+    virtualTopicHeightsVersion += 1;
+  }
+}
+
+// 列表被整体重建（刷新、切换 Feed/分类/标签）时释放与旧列表绑定的测量结果，
+// 避免上一份列表的行高、步长与偏移表继续驻留堆中。
+function resetVirtualTopicMeasurements() {
+  virtualTopicHeights = new Map();
+  virtualTopicStride = VIRTUAL_TOPIC_ESTIMATED_STRIDE;
+  virtualTopicOffsetsCache = null;
+  virtualTopicOffsetsKey = "";
+  virtualTopicHeightsVersion += 1;
 }
 
 function createTopicRow(topic, currentTopicId) {
@@ -382,13 +426,14 @@ function createTopicRow(topic, currentTopicId) {
 function hideOverflowTopicTags(root) {
   root?.querySelectorAll(".ldsv-topic-tags").forEach((tagList) => {
     const listRect = tagList.getBoundingClientRect();
+    const tags = [...tagList.querySelectorAll(".ldsv-topic-tag")];
     let shouldHideRest = false;
 
-    tagList.querySelectorAll(".ldsv-topic-tag").forEach((tag) => {
+    tags.forEach((tag) => {
       tag.hidden = false;
     });
 
-    tagList.querySelectorAll(".ldsv-topic-tag").forEach((tag) => {
+    tags.forEach((tag) => {
       if (shouldHideRest) {
         tag.hidden = true;
         return;
