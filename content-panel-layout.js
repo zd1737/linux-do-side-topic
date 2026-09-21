@@ -7,9 +7,17 @@ function clampState(nextState) {
   const fallbackLeft = Math.max(12, window.innerWidth - width - 24);
   const visibleWidth = nextState.collapsed ? COLLAPSED_SIZE : width;
   const visibleHeight = nextState.collapsed ? COLLAPSED_SIZE : height;
+  const availableWidth = Math.max(0, window.innerWidth - visibleWidth);
+  const availableHeight = Math.max(0, window.innerHeight - visibleHeight);
+  const leftRatio = normalizePositionRatio(nextState.leftRatio);
+  const topRatio = normalizePositionRatio(nextState.topRatio);
   const { left, top } = clampRect({
-    left: nextState.left == null ? fallbackLeft : Number(nextState.left),
-    top: nextState.top == null ? DEFAULT_STATE.top : Number(nextState.top),
+    left: leftRatio == null
+      ? (nextState.left == null ? fallbackLeft : Number(nextState.left))
+      : leftRatio * availableWidth,
+    top: topRatio == null
+      ? (nextState.top == null ? DEFAULT_STATE.top : Number(nextState.top))
+      : topRatio * availableHeight,
     width: visibleWidth,
     height: visibleHeight
   }, { bounds, lockSize: true });
@@ -23,10 +31,14 @@ function clampState(nextState) {
     ...nextState,
     left,
     top,
+    leftRatio: leftRatio ?? positionRatio(left, availableWidth),
+    topRatio: topRatio ?? positionRatio(top, availableHeight),
     width,
     height,
     expandedLeft: normalizeCoordinate(nextState.expandedLeft),
     expandedTop: normalizeCoordinate(nextState.expandedTop),
+    expandedLeftRatio: normalizePositionRatio(nextState.expandedLeftRatio),
+    expandedTopRatio: normalizePositionRatio(nextState.expandedTopRatio),
     feed,
     feedSubset,
     parentCategoryId,
@@ -45,6 +57,30 @@ function normalizeCoordinate(value) {
   }
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function normalizePositionRatio(value) {
+  const ratio = normalizeCoordinate(value);
+  return ratio == null ? null : clamp(ratio, 0, 1);
+}
+
+function positionRatio(coordinate, availableSize) {
+  if (availableSize <= 0) {
+    return 0;
+  }
+  return clamp(Number(coordinate) || 0, 0, availableSize) / availableSize;
+}
+
+function syncPositionRatios(options = {}) {
+  const visibleWidth = state.collapsed ? COLLAPSED_SIZE : state.width;
+  const visibleHeight = state.collapsed ? COLLAPSED_SIZE : state.height;
+  state.leftRatio = positionRatio(state.left, Math.max(0, window.innerWidth - visibleWidth));
+  state.topRatio = positionRatio(state.top, Math.max(0, window.innerHeight - visibleHeight));
+
+  if (options.expanded) {
+    state.expandedLeftRatio = state.leftRatio;
+    state.expandedTopRatio = state.topRatio;
+  }
 }
 
 function normalizeFilterId(value) {
@@ -156,9 +192,12 @@ function onDragEnd(event) {
       state.top = nextTop;
       panel.style.left = `${state.left}px`;
       panel.style.top = `${state.top}px`;
+      syncPositionRatios({ expanded: !state.collapsed });
       if (state.collapsed && dragging.moved) {
         state.expandedLeft = null;
         state.expandedTop = null;
+        state.expandedLeftRatio = null;
+        state.expandedTopRatio = null;
       }
     }
     if (!state.collapsed) {
@@ -271,11 +310,15 @@ function collapsePanel(options = {}) {
     height: COLLAPSED_SIZE
   }, { lockSize: true });
 
-  state.expandedLeft = Math.round(panelRect.left);
-  state.expandedTop = Math.round(panelRect.top);
+  state.left = Math.round(panelRect.left);
+  state.top = Math.round(panelRect.top);
+  syncPositionRatios({ expanded: true });
+  state.expandedLeft = state.left;
+  state.expandedTop = state.top;
   state.left = Math.round(collapsedRect.left);
   state.top = Math.round(collapsedRect.top);
   state.collapsed = true;
+  syncPositionRatios();
   applyPanelState(panel);
   saveStateDebounced();
   return true;
@@ -305,6 +348,7 @@ function restoreFromCollapsedAnchor() {
     state.height = height;
     state.left = Math.round(savedRect.left);
     state.top = Math.round(savedRect.top);
+    syncPositionRatios({ expanded: true });
     state.expandedLeft = state.left;
     state.expandedTop = state.top;
     state = clampState(state);
@@ -326,12 +370,24 @@ function restoreFromCollapsedAnchor() {
   state.height = height;
   state.left = Math.round(rect.left);
   state.top = Math.round(rect.top);
+  syncPositionRatios({ expanded: true });
   state.expandedLeft = state.left;
   state.expandedTop = state.top;
   state = clampState(state);
 }
 
 function savedExpandedRect(width, height, bounds) {
+  const leftRatio = normalizePositionRatio(state.expandedLeftRatio);
+  const topRatio = normalizePositionRatio(state.expandedTopRatio);
+  if (leftRatio != null && topRatio != null) {
+    return clampRect({
+      left: leftRatio * Math.max(0, window.innerWidth - width),
+      top: topRatio * Math.max(0, window.innerHeight - height),
+      width,
+      height
+    }, { bounds });
+  }
+
   const left = normalizeCoordinate(state.expandedLeft);
   const top = normalizeCoordinate(state.expandedTop);
 
@@ -511,6 +567,7 @@ function onResizeEnd(event) {
     state.top = Math.round(state.top);
     state.width = Math.round(state.width);
     state.height = Math.round(state.height);
+    syncPositionRatios({ expanded: true });
     state.expandedLeft = state.left;
     state.expandedTop = state.top;
     const didWidthChange = Math.round(resizing.startWidth) !== state.width;
