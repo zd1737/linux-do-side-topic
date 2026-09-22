@@ -194,7 +194,7 @@ function onDragEnd(event) {
     panel.classList.remove("ldsv-dragging");
     if (state.collapsed && !dragging.moved && collapsedButtonPointer?.pointerId === event.pointerId) {
       expandPanel();
-      clearLightboxAutoCollapse();
+      suppressOverlayAutoCollapse();
       ignoreCollapseClickUntil = performance.now() + 250;
     } else {
       state.left = nextLeft;
@@ -288,8 +288,8 @@ function onCollapseClick(event) {
     return;
   }
 
-  // 手动折叠/展开时取消 lightbox 自动恢复，避免和用户意图打架。
-  clearLightboxAutoCollapse();
+  // 手动折叠/展开时取消浮层自动恢复，避免和用户意图打架。
+  suppressOverlayAutoCollapse();
   if (state.collapsed) {
     expandPanel();
   } else {

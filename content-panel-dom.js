@@ -110,8 +110,8 @@ function applyPanelState(panel) {
   panel.style.height = `${clamped.collapsed ? COLLAPSED_SIZE : clamped.height}px`;
   panel.classList.toggle("ldsv-collapsed", clamped.collapsed);
 
-  // 折叠状态决定 lightbox 观察器是否需要继续监听整页 DOM。
-  syncLightboxObserverTarget();
+  // 折叠状态决定浮层观察器是否需要继续监听整页 DOM。
+  syncOverlayObserverTarget();
 
   const collapseButton = getPanelControls(panel).collapseButton;
   if (collapseButton) {

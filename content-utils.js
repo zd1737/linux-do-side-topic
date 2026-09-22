@@ -418,7 +418,7 @@ function syncPanelVisibility() {
     const shouldShow = isTopicPage();
     selectedTopicId = shouldShow ? getCurrentTopicId() : null;
     panel.hidden = !shouldShow;
-    syncLightboxObserverTarget();
+    syncOverlayObserverTarget();
     updateSelectedTopicRows();
     if (shouldShow && topics.length === 0) {
       loadTopics();
@@ -480,8 +480,8 @@ function observeDiscourseNavigation() {
     if (isTopicPage()) {
       scheduleTopicPoll(1000);
     }
-    // 路由切换时同步一次 lightbox 状态，避免残留自动折叠标记。
-    scheduleLightboxAutoCollapseSync();
+    // 路由切换时同步一次浮层状态，避免残留自动折叠标记。
+    scheduleOverlayAutoCollapseSync();
   };
 
   if (!navigationHistoryPatches) {
@@ -528,65 +528,110 @@ function observeDiscourseNavigation() {
   });
 }
 
-// Discourse 图片查看器（Magnific Popup / PhotoSwipe / d-lightbox）。
-// 面板 z-index 极高，展开时会挡住图片层，因此在查看器打开时自动收缩。
-function lightboxOpenGraceMs() {
+// 面板 z-index 极高，会在图片查看器（Magnific Popup / PhotoSwipe / d-lightbox）
+// 或站内搜索弹框打开时挡住它们，因此这些浮层打开时自动收缩面板。
+// 搜索弹框关闭后容器仍留在 DOM 中，所以检测统一看可见性，而不是存在性。
+LDSV.overlayWatch = Object.freeze({
+  // body 上的状态 class：零布局成本的快速路径。
+  bodyClasses: Object.freeze([
+    "mfp-zoom-out-cur",
+    "pswp-open",
+    "lightbox-open"
+  ]),
+  openSelectors: Object.freeze([
+    // 图片查看器：Magnific Popup / PhotoSwipe / d-lightbox。
+    ".mfp-wrap",
+    ".mfp-bg",
+    ".pswp--open",
+    ".d-lightbox",
+    "#d-lightbox",
+    "dialog.d-lightbox[open]",
+    ".d-modal.d-lightbox",
+    '[class*="d-lightbox"][role="dialog"]',
+    // 站内搜索弹框：仅在搜索菜单可见时才渲染。
+    ".search-menu-panel",
+    // 账户/通知菜单：面板只在菜单展开时渲染。
+    // 注意不能写 .user-menu-panel —— 那是常驻头部的头像按钮自身的 class。
+    ".user-menu-dropdown-wrapper .menu-panel.user-menu",
+    // 聊天抽屉：只认展开态，最小化成窄条时不抢占面板。
+    ".chat-drawer.is-expanded"
+  ]),
+  triggerSelectors: Object.freeze([
+    "a.lightbox",
+    ".lightbox-wrapper a",
+    ".cooked a.lightbox",
+    "a[data-download-href].lightbox"
+  ]),
+  classMarkers: Object.freeze([
+    "mfp-",
+    "pswp",
+    "lightbox",
+    "search-menu",
+    "chat-drawer"
+  ]),
+  idMarkers: Object.freeze(["lightbox", "search-menu"])
+});
+
+function overlayOpenGraceMs() {
   return 900;
 }
 
-function setupLightboxAutoCollapse() {
-  if (lightboxListenersBound) {
+function setupOverlayAutoCollapse() {
+  if (overlayListenersBound) {
     return;
   }
-  lightboxListenersBound = true;
+  overlayListenersBound = true;
 
-  // 点击 lightbox 链接时立刻收缩，避免等 MutationObserver 晚一拍。
-  document.addEventListener("click", onLightboxTriggerClick, true);
-  document.addEventListener("keydown", onLightboxDocumentKeyDown, true);
+  // 点击图片查看器链接时立刻收缩，避免等 MutationObserver 晚一拍。
+  document.addEventListener("click", onOverlayTriggerClick, true);
+  document.addEventListener("keydown", onOverlayDocumentKeyDown, true);
 
-  syncLightboxObserverTarget();
-  scheduleLightboxAutoCollapseSync();
+  syncOverlayObserverTarget();
+  scheduleOverlayAutoCollapseSync();
 
   LDSV.registerCleanup(() => {
-    lightboxListenersBound = false;
-    stopLightboxObserver();
-    if (lightboxSyncFrame) {
-      window.cancelAnimationFrame(lightboxSyncFrame);
-      lightboxSyncFrame = 0;
+    overlayListenersBound = false;
+    stopOverlayObserver();
+    if (overlaySyncFrame) {
+      window.cancelAnimationFrame(overlaySyncFrame);
+      overlaySyncFrame = 0;
     }
-    if (lightboxGraceTimer) {
-      window.clearTimeout(lightboxGraceTimer);
-      lightboxGraceTimer = null;
+    if (overlaySettleTimer) {
+      window.clearTimeout(overlaySettleTimer);
+      overlaySettleTimer = null;
     }
-    document.removeEventListener("click", onLightboxTriggerClick, true);
-    document.removeEventListener("keydown", onLightboxDocumentKeyDown, true);
-    clearLightboxAutoCollapse();
+    overlaySettleAttempts = 0;
+    if (overlayGraceTimer) {
+      window.clearTimeout(overlayGraceTimer);
+      overlayGraceTimer = null;
+    }
+    document.removeEventListener("click", onOverlayTriggerClick, true);
+    document.removeEventListener("keydown", onOverlayDocumentKeyDown, true);
+    clearOverlayAutoCollapse();
   });
 }
 
-// 整页 DOM 观察器只在话题页且面板展开时启用；折叠或离开话题页立即断开，
-// 否则插件自身的每帧渲染都会反复唤醒观察器并触发强制同步布局。
-function syncLightboxObserverTarget() {
+// 整页 DOM 观察器只在「话题页 + 面板可见 +（已展开或正在等浮层关闭）」时启用；
+// 其余情况立即断开，否则插件自身的每帧渲染都会反复唤醒观察器并触发强制同步布局。
+function syncOverlayObserverTarget() {
   const panel = getPanel();
-  // 面板展开时需要感知 lightbox 开合；此外在「已被 lightbox 自动折叠、等待恢复」
-  // 期间也必须继续观察，否则用户关闭查看器后无法自动展开。
   const shouldObserve = Boolean(
     panel &&
     !panel.hidden &&
     isTopicPage() &&
-    (!state.collapsed || lightboxAutoCollapsed)
+    (!state.collapsed || overlayAutoCollapsed)
   );
 
   if (shouldObserve) {
-    startLightboxObserver();
+    startOverlayObserver();
     return;
   }
 
-  stopLightboxObserver();
+  stopOverlayObserver();
 }
 
-function startLightboxObserver() {
-  if (lightboxObserver) {
+function startOverlayObserver() {
+  if (overlayObserver) {
     return;
   }
 
@@ -595,70 +640,74 @@ function startLightboxObserver() {
     return;
   }
 
-  lightboxObserver = new MutationObserver(onLightboxDomMutations);
-  lightboxObserver.observe(observeTarget, {
+  overlayObserver = new MutationObserver(onOverlayDomMutations);
+  overlayObserver.observe(observeTarget, {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["class", "open", "aria-hidden", "hidden"]
+    attributeFilter: ["class", "open", "aria-hidden", "hidden", "style"]
   });
 }
 
-function stopLightboxObserver() {
-  if (!lightboxObserver) {
+function stopOverlayObserver() {
+  if (!overlayObserver) {
     return;
   }
 
-  lightboxObserver.disconnect();
-  lightboxObserver = null;
+  overlayObserver.disconnect();
+  overlayObserver = null;
 }
 
-function clearLightboxAutoCollapse() {
-  lightboxAutoCollapsed = false;
-  lightboxSeenOpen = false;
-  lightboxAwaitingOpenUntil = 0;
+function clearOverlayAutoCollapse() {
+  overlayAutoCollapsed = false;
+  overlayAwaitingOpenUntil = 0;
 }
 
-function onLightboxDomMutations(mutations) {
+// 用户手动折叠/展开面板：本次浮层会话不再自动收缩，也不需要自动恢复。
+function suppressOverlayAutoCollapse() {
+  overlaySuppressed = getOverlayPresence() === "open";
+  clearOverlayAutoCollapse();
+}
+
+function onOverlayDomMutations(mutations) {
   const panel = getPanel();
 
   for (const mutation of mutations) {
-    // 插件面板自身的渲染不属于 lightbox 信号，跳过可省掉后续全部判断。
+    // 插件面板自身的渲染不属于浮层信号，跳过可省掉后续全部判断。
     if (panel && panel.contains(mutation.target)) {
       continue;
     }
 
     if (mutation.type === "childList") {
-      if (lightboxNodesRelevant(mutation.addedNodes) || lightboxNodesRelevant(mutation.removedNodes)) {
-        scheduleLightboxAutoCollapseSync();
+      if (overlayNodesRelevant(mutation.addedNodes) || overlayNodesRelevant(mutation.removedNodes)) {
+        scheduleOverlayAutoCollapseSync();
         return;
       }
       continue;
     }
 
-    if (mutation.type === "attributes" && isLightboxishElement(mutation.target)) {
-      scheduleLightboxAutoCollapseSync();
+    if (mutation.type === "attributes" && isOverlayElement(mutation.target)) {
+      scheduleOverlayAutoCollapseSync();
       return;
     }
   }
 }
 
-function lightboxNodesRelevant(nodeList) {
+function overlayNodesRelevant(nodeList) {
+  const selector = LDSV.overlayWatch.openSelectors.join(", ");
   for (const node of nodeList) {
     if (node.nodeType !== Node.ELEMENT_NODE) {
       continue;
     }
-    if (isLightboxishElement(node)) {
-      return true;
-    }
-    if (node.querySelector?.(".mfp-wrap, .mfp-bg, .mfp-container, .pswp, .d-lightbox, #d-lightbox, [class*='d-lightbox']")) {
+    if (isOverlayElement(node) || node.matches?.(selector) || node.querySelector?.(selector)) {
       return true;
     }
   }
+
   return false;
 }
 
-function isLightboxishElement(element) {
+function isOverlayElement(element) {
   if (!element || element.nodeType !== Node.ELEMENT_NODE) {
     return false;
   }
@@ -667,20 +716,21 @@ function isLightboxishElement(element) {
   }
 
   const className = typeof element.className === "string" ? element.className : "";
-  if (
-    className.includes("mfp-") ||
-    className.includes("pswp") ||
-    className.includes("lightbox") ||
-    className.includes("d-lightbox")
-  ) {
+  if (LDSV.overlayWatch.classMarkers.some((marker) => className.includes(marker))) {
     return true;
   }
 
   const id = element.id || "";
-  return id === "d-lightbox" || id.includes("lightbox");
+  return LDSV.overlayWatch.idMarkers.some((marker) => id.includes(marker));
 }
 
-function onLightboxTriggerClick(event) {
+function onOverlayTriggerClick(event) {
+  // 兜底：面板外的每次点击都开启一轮判定窗口。
+  // 站内搜索弹框复用已有容器时，出现与消失都可能不产生已订阅的 DOM 变更，
+  // 只靠观察器会漏判，所以在窗口内按固定间隔连判几次。
+  if (event.target?.closest?.(`#${PANEL_ID}`) == null) {
+    watchOverlayAfterClick();
+  }
   if (event.defaultPrevented || event.button !== 0) {
     return;
   }
@@ -688,9 +738,7 @@ function onLightboxTriggerClick(event) {
     return;
   }
 
-  const trigger = event.target.closest?.(
-    "a.lightbox, .lightbox-wrapper a, .cooked a.lightbox, a[data-download-href].lightbox"
-  );
+  const trigger = event.target.closest?.(LDSV.overlayWatch.triggerSelectors.join(", "));
   if (!trigger) {
     return;
   }
@@ -703,132 +751,220 @@ function onLightboxTriggerClick(event) {
     return;
   }
 
-  if (collapsePanel()) {
-    const graceMs = lightboxOpenGraceMs();
-    lightboxAutoCollapsed = true;
-    lightboxSeenOpen = false;
-    lightboxAwaitingOpenUntil = performance.now() + graceMs;
-    // 折叠后仍需观察 lightbox 是否挂载，关闭查看器时才能恢复展开。
-    syncLightboxObserverTarget();
-    // 给 lightbox 挂载留一点时间；超时仍未打开则恢复展开。
-    if (lightboxGraceTimer) {
-      window.clearTimeout(lightboxGraceTimer);
-    }
-    lightboxGraceTimer = window.setTimeout(() => {
-      lightboxGraceTimer = null;
-      scheduleLightboxAutoCollapseSync();
-    }, graceMs + 50);
+  const graceMs = overlayOpenGraceMs();
+  // 先置位再折叠：折叠过程会同步观察器开关，标志位必须已经是 true。
+  overlayAutoCollapsed = true;
+  overlayAwaitingOpenUntil = performance.now() + graceMs;
+  collapsePanel();
+
+  // 给浮层挂载留一点时间；超时仍未打开则恢复展开。
+  if (overlayGraceTimer) {
+    window.clearTimeout(overlayGraceTimer);
   }
+  overlayGraceTimer = window.setTimeout(() => {
+    overlayGraceTimer = null;
+    scheduleOverlayAutoCollapseSync();
+  }, graceMs + 50);
 }
 
-function onLightboxDocumentKeyDown(event) {
+function onOverlayDocumentKeyDown(event) {
   if (event.key !== "Escape") {
     return;
   }
-  // Escape 关闭图片查看后同步一次，尽快恢复展开。
-  scheduleLightboxAutoCollapseSync();
+  // Escape 关闭浮层后同步一次，尽快恢复展开。
+  scheduleOverlayAutoCollapseSync();
 }
 
-function scheduleLightboxAutoCollapseSync() {
-  if (lightboxSyncFrame) {
+// 单次判定：不推进判定窗口的计数，用于「窗口在跑但又有新信号」时立即补判。
+function requestOverlaySyncNow() {
+  if (overlaySyncFrame) {
     return;
   }
-  lightboxSyncFrame = window.requestAnimationFrame(() => {
-    lightboxSyncFrame = 0;
-    syncLightboxAutoCollapse();
+
+  overlaySyncFrame = window.requestAnimationFrame(() => {
+    overlaySyncFrame = 0;
+    syncOverlayAutoCollapse(false);
   });
 }
 
-function syncLightboxAutoCollapse() {
+function scheduleOverlayAutoCollapseSync() {
+  // 判定窗口已经在跑时先立即补判一次，窗口本身继续按间隔重试。
+  if (overlaySettleTimer) {
+    requestOverlaySyncNow();
+    return;
+  }
+
+  if (overlaySyncFrame) {
+    return;
+  }
+
+  overlaySyncFrame = window.requestAnimationFrame(() => {
+    overlaySyncFrame = 0;
+    overlaySettleAttempts = 0;
+    stepOverlaySettle(false);
+  });
+}
+
+// 面板外点击后的判定窗口：浮层可能在点击后几十到几百毫秒才出现，
+// 而且不一定产生已订阅的 DOM 变更，因此在窗口内按固定间隔连判。
+function watchOverlayAfterClick() {
+  if (overlaySettleTimer) {
+    requestOverlaySyncNow();
+    return;
+  }
+
+  if (overlaySyncFrame) {
+    return;
+  }
+
+  overlaySyncFrame = window.requestAnimationFrame(() => {
+    overlaySyncFrame = 0;
+    overlaySettleAttempts = 0;
+    stepOverlaySettle(true);
+  });
+}
+
+function overlaySettleIntervalMs() {
+  return 150;
+}
+
+// 判定窗口总时长与浮层挂载宽限时间一致，超出即认为本轮不再有新浮层。
+function overlaySettleMaxAttempts() {
+  return Math.max(1, Math.ceil(overlayOpenGraceMs() / overlaySettleIntervalMs()));
+}
+
+function stepOverlaySettle(isWatchWindow) {
+  overlaySettleAttempts += 1;
+  const isFinal = overlaySettleAttempts >= overlaySettleMaxAttempts();
+  const pending = syncOverlayAutoCollapse(isFinal);
+
+  if (isFinal || (!pending && !isWatchWindow)) {
+    overlaySettleAttempts = 0;
+    return;
+  }
+
+  overlaySettleTimer = window.setTimeout(() => {
+    overlaySettleTimer = null;
+    stepOverlaySettle(isWatchWindow);
+  }, overlaySettleIntervalMs());
+}
+
+function syncOverlayAutoCollapse(isFinal) {
   const panel = getPanel();
-  const lightboxOpen = isDiscourseLightboxOpen();
+  const presence = getOverlayPresence();
 
   if (!panel || panel.hidden || !isTopicPage()) {
-    if (lightboxAutoCollapsed && !lightboxOpen && canRestoreFromLightbox()) {
-      clearLightboxAutoCollapse();
+    overlaySuppressed = false;
+    if (overlayAutoCollapsed && presence === "closed" && canRestoreFromOverlay()) {
+      clearOverlayAutoCollapse();
+      if (state.collapsed) {
+        expandPanel();
+      }
     }
-    return;
+    return false;
   }
 
-  if (lightboxOpen) {
-    lightboxSeenOpen = true;
-    lightboxAwaitingOpenUntil = 0;
-    if (!state.collapsed && collapsePanel()) {
-      lightboxAutoCollapsed = true;
-    }
-    return;
-  }
-
-  if (!lightboxAutoCollapsed || !canRestoreFromLightbox()) {
-    return;
-  }
-
-  clearLightboxAutoCollapse();
-  if (state.collapsed) {
-    expandPanel();
-  }
-}
-
-function canRestoreFromLightbox() {
-  // 只有“确实打开过”或“等待挂载超时”后，才允许自动展开，避免点击后 DOM 尚未出现时误恢复。
-  return lightboxSeenOpen || performance.now() >= lightboxAwaitingOpenUntil;
-}
-
-function isDiscourseLightboxOpen() {
-  // PhotoSwipe / Magnific 有时只在 body 上挂状态 class，先判这条零布局成本的路径。
-  const body = document.body;
-  if (
-    body &&
-    (body.classList.contains("mfp-zoom-out-cur") ||
-      body.classList.contains("pswp-open") ||
-      body.classList.contains("lightbox-open"))
-  ) {
+  // 浮层元素已经插入但还没显示出来（入场动画、异步定位）：
+  // 本轮先不动手，交给判定窗口继续重试，避免过早当成「已关闭」而恢复展开。
+  if (presence === "pending" && !isFinal) {
     return true;
   }
 
-  const selectors = [
-    ".mfp-wrap.mfp-ready",
-    ".mfp-bg.mfp-ready",
-    ".mfp-wrap",
-    ".pswp--open",
-    ".pswp.pswp--open",
-    ".d-lightbox",
-    "#d-lightbox",
-    "dialog.d-lightbox[open]",
-    ".d-modal.d-lightbox",
-    '[class*="d-lightbox"][role="dialog"]'
-  ];
-
-  for (const selector of selectors) {
-    const matches = document.querySelectorAll(selector);
-    for (const element of matches) {
-      if (isLightboxElementVisible(element)) {
-        return true;
+  if (presence === "open") {
+    if (state.collapsed) {
+      // 面板本来就折叠着，不需要动手；若这次折叠来自我们，记下以便关闭时恢复。
+      if (overlayAutoCollapsed) {
+        overlayAwaitingOpenUntil = 0;
       }
+      return false;
     }
+
+    if (overlaySuppressed) {
+      return false;
+    }
+
+    // 判定只看「浮层打开 + 面板展开 + 用户未干预」这三个当下事实，
+    // 不依赖历史标志位，否则一旦标志位残留就会永远不再收缩。
+    // 先置位再折叠：折叠过程会同步观察器开关，标志位必须已经是 true。
+    overlayAutoCollapsed = true;
+    overlayAwaitingOpenUntil = 0;
+    collapsePanel();
+    return false;
   }
 
+  // 浮层已关闭，或判定窗口结束仍未显示：结束本次会话，允许下一次打开重新收缩。
+  overlaySuppressed = false;
+
+  if (!overlayAutoCollapsed || !canRestoreFromOverlay()) {
+    return false;
+  }
+
+  clearOverlayAutoCollapse();
+  if (state.collapsed) {
+    expandPanel();
+  }
   return false;
 }
 
-function isLightboxElementVisible(element) {
-  if (!element || element.hidden) {
-    return false;
+function canRestoreFromOverlay() {
+  // 只有超过「浮层挂载宽限时间」才允许自动展开：
+  // 触发器点击后到浮层真正出现之前不允许误恢复。
+  return performance.now() >= overlayAwaitingOpenUntil;
+}
+
+// 浮层状态：open=可见，pending=已在 DOM 但尚未显示，closed=不存在。
+// 区分 pending 与 closed，是为了不把入场过程中的浮层误判成「已关闭」。
+function getOverlayPresence() {
+  // body 上的状态 class 零布局成本，先判这条路径。
+  const body = document.body;
+  if (
+    body &&
+    LDSV.overlayWatch.bodyClasses.some((className) => body.classList.contains(className))
+  ) {
+    return "open";
   }
-  if (element.getAttribute("aria-hidden") === "true") {
-    return false;
+
+  // 合并成一次查询：逐条选择器各查一遍会对整棵 DOM 反复遍历。
+  const matches = document.querySelectorAll(LDSV.overlayWatch.openSelectors.join(", "));
+  let pending = false;
+  for (const element of matches) {
+    if (isOverlayElementVisible(element)) {
+      return "open";
+    }
+    pending = true;
   }
-  if (element.tagName === "DIALOG" && !element.open) {
+
+  return pending ? "pending" : "closed";
+}
+
+function isOverlayElementVisible(element) {
+  if (!element || element.nodeType !== Node.ELEMENT_NODE) {
     return false;
   }
 
-  const style = window.getComputedStyle(element);
-  if (
-    style.display === "none" ||
-    style.visibility === "hidden" ||
-    Number(style.opacity) === 0
-  ) {
-    return false;
+  // 逐级向上检查：浮层常被祖先用 display/visibility/opacity 隐藏，
+  // 只看自身样式会把「已关闭但仍留在 DOM」的弹框误判为打开。
+  for (let node = element; node && node.nodeType === Node.ELEMENT_NODE; node = node.parentElement) {
+    if (node.hidden || node.getAttribute("aria-hidden") === "true") {
+      return false;
+    }
+    if (node.tagName === "DIALOG" && !node.open) {
+      return false;
+    }
+
+    const style = window.getComputedStyle(node);
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      style.visibility === "collapse" ||
+      Number(style.opacity) === 0
+    ) {
+      return false;
+    }
+
+    if (node === document.body) {
+      break;
+    }
   }
 
   const rect = element.getBoundingClientRect();
